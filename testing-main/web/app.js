@@ -79,7 +79,10 @@ function renderRiskSegments(segments) {
   segments.forEach((seg) => {
     const line = document.getElementById(seg.segment_id);
     if (!line) return;
+    line.classList.remove("route");
     line.style.stroke = riskToColor(seg.risk_score);
+    line.style.pointerEvents = "stroke";
+    line.style.cursor = "pointer";
     line.onclick = () => {
       selectedSegmentId = seg.segment_id;
       document.getElementById("segmentDetails").textContent =
@@ -160,13 +163,17 @@ function setMaintenanceMode(enabled) {
 }
 
 async function refreshAll() {
+  const token = ++refreshToken;
   document.getElementById("timelineLabel").textContent = String(selectedHorizon());
   const risk = await fetchRiskMap();
+  if (token !== refreshToken) return;
   document.getElementById("warningBanner").textContent = risk.active_warning;
   renderNodes(risk.nodes);
   renderRiskSegments(risk.segments);
+  if (currentRouteNodes.length > 1) drawRoute(currentRouteNodes);
 
   const maintenance = await fetchMaintenance();
+  if (token !== refreshToken) return;
   renderMaintenance(maintenance);
 }
 
@@ -183,7 +190,10 @@ function attachActions() {
     document.getElementById("safestBtn").classList.remove("active");
   };
 
-  document.getElementById("timeline").oninput = refreshAll;
+  document.getElementById("timeline").oninput = () => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(refreshAll, 120);
+  };
   document.getElementById("routeBtn").onclick = planRoute;
 
   document.querySelectorAll("[data-report]").forEach((btn) => {
