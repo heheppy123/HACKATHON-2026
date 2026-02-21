@@ -12,6 +12,9 @@ const SEGMENT_ROUTE_LOOKUP = {
 let safestMode = true;
 let currentRiskSegments = [];
 let selectedSegmentId = null;
+let currentRouteNodes = [];
+let refreshToken = 0;
+let refreshTimer = null;
 
 function riskToColor(risk) {
   if (risk >= 0.8) return "#ff5f7d";
@@ -25,6 +28,10 @@ function clearRouteStyles() {
 
 function drawRoute(path) {
   clearRouteStyles();
+  currentRouteNodes = Array.isArray(path) ? path : [];
+  for (let i = 0; i < currentRouteNodes.length - 1; i += 1) {
+    const a = currentRouteNodes[i];
+    const b = currentRouteNodes[i + 1];
     const key = `${a}->${b}`;
     const reverseKey = `${b}->${a}`;
     const segId = SEGMENT_ROUTE_LOOKUP[key] || SEGMENT_ROUTE_LOOKUP[reverseKey];
