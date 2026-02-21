@@ -25,6 +25,7 @@ SEED_SEGMENTS = [
         1,
         1,
         1,
+        0,
     ),
     (
         "S2",
@@ -39,6 +40,7 @@ SEED_SEGMENTS = [
         5,
         1,
         0,
+        1,
         1,
         1,
         1,
@@ -59,6 +61,7 @@ SEED_SEGMENTS = [
         0,
         0,
         0,
+        1,
     ),
     (
         "S4",
@@ -75,6 +78,7 @@ SEED_SEGMENTS = [
         1,
         1,
         1,
+        0,
         0,
     ),
     (
@@ -93,6 +97,7 @@ SEED_SEGMENTS = [
         1,
         0,
         1,
+        1,
     ),
     (
         "S6",
@@ -108,6 +113,7 @@ SEED_SEGMENTS = [
         1,
         0,
         0,
+        1,
         1,
         1,
     ),
@@ -139,7 +145,8 @@ def init_db() -> None:
                 foot_traffic_importance INTEGER NOT NULL,
                 emergency_route INTEGER NOT NULL DEFAULT 0,
                 accessible_route INTEGER NOT NULL DEFAULT 0,
-                main_corridor INTEGER NOT NULL DEFAULT 0
+                main_corridor INTEGER NOT NULL DEFAULT 0,
+                wind_corridor INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS Reports (
@@ -182,9 +189,10 @@ def init_db() -> None:
                     treatment_status,
                     emergency_route,
                     accessible_route,
-                    main_corridor
+                    main_corridor,
+                    wind_corridor
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 SEED_SEGMENTS,
             )
@@ -221,6 +229,7 @@ def _ensure_segment_schema(conn: sqlite3.Connection) -> None:
         ("emergency_route", "ALTER TABLE WalkwaySegments ADD COLUMN emergency_route INTEGER NOT NULL DEFAULT 0"),
         ("accessible_route", "ALTER TABLE WalkwaySegments ADD COLUMN accessible_route INTEGER NOT NULL DEFAULT 0"),
         ("main_corridor", "ALTER TABLE WalkwaySegments ADD COLUMN main_corridor INTEGER NOT NULL DEFAULT 0"),
+        ("wind_corridor", "ALTER TABLE WalkwaySegments ADD COLUMN wind_corridor INTEGER NOT NULL DEFAULT 0"),
     ]
     for column, ddl in migrations:
         if column not in columns:
@@ -236,32 +245,32 @@ def _backfill_segment_profiles(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
         UPDATE WalkwaySegments
-        SET surface_type = 'concrete', drainage_quality = 'fair', shading_exposure = 0.72, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 1, main_corridor = 1
+        SET surface_type = 'concrete', drainage_quality = 'fair', shading_exposure = 0.72, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 1, main_corridor = 1, wind_corridor = 0
         WHERE id = 'S1'
         AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
 
         UPDATE WalkwaySegments
-        SET surface_type = 'brick', drainage_quality = 'poor', shading_exposure = 0.68, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 1, main_corridor = 1
+        SET surface_type = 'brick', drainage_quality = 'poor', shading_exposure = 0.68, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 1, main_corridor = 1, wind_corridor = 1
         WHERE id = 'S2'
         AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
 
         UPDATE WalkwaySegments
-        SET surface_type = 'bridge', drainage_quality = 'fair', shading_exposure = 0.34, foot_traffic_importance = 4, emergency_route = 0, accessible_route = 0, main_corridor = 0
+        SET surface_type = 'bridge', drainage_quality = 'fair', shading_exposure = 0.34, foot_traffic_importance = 4, emergency_route = 0, accessible_route = 0, main_corridor = 0, wind_corridor = 1
         WHERE id = 'S3'
         AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
 
         UPDATE WalkwaySegments
-        SET surface_type = 'asphalt', drainage_quality = 'good', shading_exposure = 0.25, foot_traffic_importance = 3, emergency_route = 1, accessible_route = 1, main_corridor = 0
+        SET surface_type = 'asphalt', drainage_quality = 'good', shading_exposure = 0.25, foot_traffic_importance = 3, emergency_route = 1, accessible_route = 1, main_corridor = 0, wind_corridor = 0
         WHERE id = 'S4'
         AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
 
         UPDATE WalkwaySegments
-        SET surface_type = 'concrete', drainage_quality = 'poor', shading_exposure = 0.81, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 0, main_corridor = 1
+        SET surface_type = 'concrete', drainage_quality = 'poor', shading_exposure = 0.81, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 0, main_corridor = 1, wind_corridor = 1
         WHERE id = 'S5'
         AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
 
         UPDATE WalkwaySegments
-        SET surface_type = 'asphalt', drainage_quality = 'good', shading_exposure = 0.57, foot_traffic_importance = 4, emergency_route = 0, accessible_route = 1, main_corridor = 1
+        SET surface_type = 'asphalt', drainage_quality = 'good', shading_exposure = 0.57, foot_traffic_importance = 4, emergency_route = 0, accessible_route = 1, main_corridor = 1, wind_corridor = 1
         WHERE id = 'S6'
         AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
         """
