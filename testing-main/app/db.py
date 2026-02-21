@@ -9,12 +9,108 @@ DB_PATH = Path("frostflow.db")
 
 
 SEED_SEGMENTS = [
-    ("S1", "SUB to Quad", "SUB", "Quad", 230.0, 2.0, 1, 0),
-    ("S2", "Quad to CAB", "Quad", "CAB", 180.0, 1.5, 1, 0),
-    ("S3", "CAB to Library", "CAB", "Library", 140.0, 4.2, 0, 0),
-    ("S4", "SUB to Library", "SUB", "Library", 200.0, 0.5, 0, 1),
-    ("S5", "Library to HUB", "Library", "HUB", 260.0, 3.0, 1, 0),
-    ("S6", "CAB to HUB", "CAB", "HUB", 220.0, 2.5, 1, 0),
+    (
+        "S1",
+        "SUB to Quad",
+        "SUB",
+        "Quad",
+        230.0,
+        "concrete",
+        2.0,
+        "fair",
+        0.72,
+        5,
+        1,
+        0,
+        1,
+        1,
+        1,
+    ),
+    (
+        "S2",
+        "Quad to CAB",
+        "Quad",
+        "CAB",
+        180.0,
+        "brick",
+        1.5,
+        "poor",
+        0.68,
+        5,
+        1,
+        0,
+        1,
+        1,
+        1,
+    ),
+    (
+        "S3",
+        "CAB to Library",
+        "CAB",
+        "Library",
+        140.0,
+        "bridge",
+        4.2,
+        "fair",
+        0.34,
+        4,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ),
+    (
+        "S4",
+        "SUB to Library",
+        "SUB",
+        "Library",
+        200.0,
+        "asphalt",
+        0.5,
+        "good",
+        0.25,
+        3,
+        0,
+        1,
+        1,
+        1,
+        0,
+    ),
+    (
+        "S5",
+        "Library to HUB",
+        "Library",
+        "HUB",
+        260.0,
+        "concrete",
+        3.0,
+        "poor",
+        0.81,
+        5,
+        1,
+        0,
+        1,
+        0,
+        1,
+    ),
+    (
+        "S6",
+        "CAB to HUB",
+        "CAB",
+        "HUB",
+        220.0,
+        "asphalt",
+        2.5,
+        "good",
+        0.57,
+        4,
+        1,
+        0,
+        0,
+        1,
+        1,
+    ),
 ]
 
 
@@ -36,7 +132,14 @@ def init_db() -> None:
                 distance_m REAL NOT NULL,
                 slope_pct REAL NOT NULL,
                 shaded INTEGER NOT NULL,
-                treatment_status INTEGER NOT NULL DEFAULT 0
+                treatment_status INTEGER NOT NULL DEFAULT 0,
+                surface_type TEXT NOT NULL,
+                drainage_quality TEXT NOT NULL,
+                shading_exposure REAL NOT NULL,
+                foot_traffic_importance INTEGER NOT NULL,
+                emergency_route INTEGER NOT NULL DEFAULT 0,
+                accessible_route INTEGER NOT NULL DEFAULT 0,
+                main_corridor INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS Reports (
@@ -57,25 +160,112 @@ def init_db() -> None:
             );
             """
         )
+        _ensure_segment_schema(conn)
 
         existing = conn.execute("SELECT COUNT(*) c FROM WalkwaySegments").fetchone()["c"]
         if existing == 0:
             conn.executemany(
                 """
                 INSERT INTO WalkwaySegments
-                (id, name, start_node, end_node, distance_m, slope_pct, shaded, treatment_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (
+                    id,
+                    name,
+                    start_node,
+                    end_node,
+                    distance_m,
+                    surface_type,
+                    slope_pct,
+                    drainage_quality,
+                    shading_exposure,
+                    foot_traffic_importance,
+                    shaded,
+                    treatment_status,
+                    emergency_route,
+                    accessible_route,
+                    main_corridor
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 SEED_SEGMENTS,
             )
+        else:
+            _backfill_segment_profiles(conn)
 
         weather_count = conn.execute("SELECT COUNT(*) c FROM WeatherData").fetchone()["c"]
         if weather_count == 0:
             now = datetime.now(timezone.utc)
             rows = []
-            for hours, temp, precip in [(-12, 2.2, 1.8), (-6, 0.9, 0.6), (0, -1.5, 0.1), (6, -3.2, 0.0), (12, -2.1, 0.0), (24, -0.6, 0.2)]:
+            for hours, temp, precip in [
+                (-12, 1.8, 1.2),
+                (-6, 0.4, 0.8),
+                (0, -2.3, 0.3),
+                (6, -6.4, 0.0),
+                (12, -11.8, 0.1),
+                (18, -15.5, 0.0),
+                (24, -8.2, 0.0),
+            ]:
                 rows.append(((now + timedelta(hours=hours)).isoformat(), temp, precip))
             conn.executemany("INSERT INTO WeatherData(timestamp,temp_c,precip_mm) VALUES (?,?,?)", rows)
+
+
+def _ensure_segment_schema(conn: sqlite3.Connection) -> None:
+    columns = {row["name"] for row in conn.execute("PRAGMA table_info(WalkwaySegments)").fetchall()}
+    migrations = [
+        ("surface_type", "ALTER TABLE WalkwaySegments ADD COLUMN surface_type TEXT NOT NULL DEFAULT 'concrete'"),
+        ("drainage_quality", "ALTER TABLE WalkwaySegments ADD COLUMN drainage_quality TEXT NOT NULL DEFAULT 'fair'"),
+        ("shading_exposure", "ALTER TABLE WalkwaySegments ADD COLUMN shading_exposure REAL NOT NULL DEFAULT 0.5"),
+        (
+            "foot_traffic_importance",
+            "ALTER TABLE WalkwaySegments ADD COLUMN foot_traffic_importance INTEGER NOT NULL DEFAULT 3",
+        ),
+        ("emergency_route", "ALTER TABLE WalkwaySegments ADD COLUMN emergency_route INTEGER NOT NULL DEFAULT 0"),
+        ("accessible_route", "ALTER TABLE WalkwaySegments ADD COLUMN accessible_route INTEGER NOT NULL DEFAULT 0"),
+        ("main_corridor", "ALTER TABLE WalkwaySegments ADD COLUMN main_corridor INTEGER NOT NULL DEFAULT 0"),
+    ]
+    for column, ddl in migrations:
+        if column not in columns:
+            conn.execute(ddl)
+
+    conn.execute("UPDATE WalkwaySegments SET surface_type = 'concrete' WHERE surface_type IS NULL")
+    conn.execute("UPDATE WalkwaySegments SET drainage_quality = 'fair' WHERE drainage_quality IS NULL")
+    conn.execute("UPDATE WalkwaySegments SET shading_exposure = 0.5 WHERE shading_exposure IS NULL")
+    conn.execute("UPDATE WalkwaySegments SET foot_traffic_importance = 3 WHERE foot_traffic_importance IS NULL")
+
+
+def _backfill_segment_profiles(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        UPDATE WalkwaySegments
+        SET surface_type = 'concrete', drainage_quality = 'fair', shading_exposure = 0.72, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 1, main_corridor = 1
+        WHERE id = 'S1'
+        AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
+
+        UPDATE WalkwaySegments
+        SET surface_type = 'brick', drainage_quality = 'poor', shading_exposure = 0.68, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 1, main_corridor = 1
+        WHERE id = 'S2'
+        AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
+
+        UPDATE WalkwaySegments
+        SET surface_type = 'bridge', drainage_quality = 'fair', shading_exposure = 0.34, foot_traffic_importance = 4, emergency_route = 0, accessible_route = 0, main_corridor = 0
+        WHERE id = 'S3'
+        AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
+
+        UPDATE WalkwaySegments
+        SET surface_type = 'asphalt', drainage_quality = 'good', shading_exposure = 0.25, foot_traffic_importance = 3, emergency_route = 1, accessible_route = 1, main_corridor = 0
+        WHERE id = 'S4'
+        AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
+
+        UPDATE WalkwaySegments
+        SET surface_type = 'concrete', drainage_quality = 'poor', shading_exposure = 0.81, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 0, main_corridor = 1
+        WHERE id = 'S5'
+        AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
+
+        UPDATE WalkwaySegments
+        SET surface_type = 'asphalt', drainage_quality = 'good', shading_exposure = 0.57, foot_traffic_importance = 4, emergency_route = 0, accessible_route = 1, main_corridor = 1
+        WHERE id = 'S6'
+        AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
+        """
+    )
 
 
 def upsert_weather(timestamp_iso: str, temp_c: float, precip_mm: float) -> None:
