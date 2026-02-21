@@ -25,9 +25,6 @@ function clearRouteStyles() {
 
 function drawRoute(path) {
   clearRouteStyles();
-  for (let i = 0; i < path.length - 1; i += 1) {
-    const a = path[i];
-    const b = path[i + 1];
     const key = `${a}->${b}`;
     const reverseKey = `${b}->${a}`;
     const segId = SEGMENT_ROUTE_LOOKUP[key] || SEGMENT_ROUTE_LOOKUP[reverseKey];
