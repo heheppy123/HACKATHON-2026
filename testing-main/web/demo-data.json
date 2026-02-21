@@ -1,0 +1,139 @@
+{
+  "weather": {
+    "now_temp_c": -1.2,
+    "min_next_6h_c": -4.0,
+    "max_prev_12h_c": 2.5,
+    "precip_prev_12h_mm": 2.3,
+    "snow_depth_cm": 3.0,
+    "hour_of_day": 7,
+    "month": 1
+  },
+  "route": [
+    "SUB",
+    "Library",
+    "HUB"
+  ],
+  "route_weighted_cost": 821.8,
+  "segment_risk": {
+    "S1": {
+      "segment_id": "S1",
+      "risk_score": 1.0,
+      "confidence": 0.63,
+      "reasons": [
+        "Temperature near freezing",
+        "Recent precipitation/snowpack",
+        "Freeze-thaw refreeze window",
+        "Shaded segment",
+        "Early morning persistence",
+        "Report: Icy"
+      ]
+    },
+    "S2": {
+      "segment_id": "S2",
+      "risk_score": 0.989,
+      "confidence": 0.63,
+      "reasons": [
+        "Temperature near freezing",
+        "Recent precipitation/snowpack",
+        "Freeze-thaw refreeze window",
+        "Shaded segment",
+        "Early morning persistence",
+        "Report: Slushy"
+      ]
+    },
+    "S3": {
+      "segment_id": "S3",
+      "risk_score": 0.81,
+      "confidence": 0.53,
+      "reasons": [
+        "Temperature near freezing",
+        "Recent precipitation/snowpack",
+        "Freeze-thaw refreeze window",
+        "Early morning persistence"
+      ]
+    },
+    "S4": {
+      "segment_id": "S4",
+      "risk_score": 0.652,
+      "confidence": 0.63,
+      "reasons": [
+        "Temperature near freezing",
+        "Recent precipitation/snowpack",
+        "Freeze-thaw refreeze window",
+        "Early morning persistence",
+        "Report: Salted"
+      ]
+    },
+    "S5": {
+      "segment_id": "S5",
+      "risk_score": 0.89,
+      "confidence": 0.53,
+      "reasons": [
+        "Temperature near freezing",
+        "Recent precipitation/snowpack",
+        "Freeze-thaw refreeze window",
+        "Shaded segment",
+        "Early morning persistence"
+      ]
+    },
+    "S6": {
+      "segment_id": "S6",
+      "risk_score": 0.89,
+      "confidence": 0.53,
+      "reasons": [
+        "Temperature near freezing",
+        "Recent precipitation/snowpack",
+        "Freeze-thaw refreeze window",
+        "Shaded segment",
+        "Early morning persistence"
+      ]
+    }
+  },
+  "maintenance_priorities": [
+    {
+      "segment_id": "S1",
+      "from": "SUB",
+      "to": "Quad",
+      "risk_score": 1.0,
+      "confidence": 0.63,
+      "recommended_treatment": "brine",
+      "salt_kg_if_rock_salt": 27.6,
+      "salt_kg_if_brine": 20.7
+    },
+    {
+      "segment_id": "S2",
+      "from": "Quad",
+      "to": "CAB",
+      "risk_score": 0.989,
+      "confidence": 0.63,
+      "recommended_treatment": "brine",
+      "salt_kg_if_rock_salt": 21.6,
+      "salt_kg_if_brine": 16.2
+    },
+    {
+      "segment_id": "S5",
+      "from": "Library",
+      "to": "HUB",
+      "risk_score": 0.89,
+      "confidence": 0.53,
+      "recommended_treatment": "brine",
+      "salt_kg_if_rock_salt": 31.2,
+      "salt_kg_if_brine": 23.4
+    },
+    {
+      "segment_id": "S6",
+      "from": "CAB",
+      "to": "HUB",
+      "risk_score": 0.89,
+      "confidence": 0.53,
+      "recommended_treatment": "brine",
+      "salt_kg_if_rock_salt": 26.4,
+      "salt_kg_if_brine": 19.8
+    }
+  ],
+  "environmental_metrics": {
+    "estimated_kg_rock_salt": 106.8,
+    "estimated_kg_brine_equivalent": 80.1,
+    "estimated_reduction_pct": 25.0
+  }
+}
