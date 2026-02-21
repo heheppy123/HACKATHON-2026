@@ -12,14 +12,21 @@ def test_risk_map_shape():
     risk = engine.compute_risk_map(0)
     assert "S1" in risk
     assert 0 <= risk["S1"].risk_score <= 1
+    assert risk["S1"].status in {"clear", "caution", "confirmed_hazard", "treated_stable", "treated_monitor"}
+    assert risk["S1"].risk_peak_hour in {0, 6, 12, 18, 24}
 
 
-def test_report_changes_risk():
+def test_report_feedback_levels():
     engine = FrostFlowEngine()
-    before = engine.compute_risk_map(0)["S1"].risk_score
+    baseline = engine.compute_risk_map(0)["S1"]
     execute("INSERT INTO Reports(segment_id, report_type, timestamp) VALUES ('S1','Icy', datetime('now'))")
-    after = engine.compute_risk_map(0)["S1"].risk_score
-    assert after >= before
+    after_single = engine.compute_risk_map(0)["S1"]
+    execute("INSERT INTO Reports(segment_id, report_type, timestamp) VALUES ('S1','Icy', datetime('now'))")
+    after_multiple = engine.compute_risk_map(0)["S1"]
+
+    assert after_single.risk_score >= baseline.risk_score
+    assert after_single.status == "caution"
+    assert after_multiple.status == "confirmed_hazard"
 
 
 def test_route_and_maintenance():
@@ -31,3 +38,6 @@ def test_route_and_maintenance():
     plan = engine.maintenance_plan(6)
     assert len(plan["ranked_segments"]) > 0
     assert "chloride_reduction_pct" in plan["environmental_metrics"]
+    assert "chloride_runoff_reduction_kg" in plan["environmental_metrics"]
+    assert plan["ranked_segments"][0]["recommended_treatment"] in {"brine", "salt", "sand"}
+    assert "kg_saved_vs_blanket" in plan["ranked_segments"][0]
