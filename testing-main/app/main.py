@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from .db import execute, init_db
 from .engine import FrostFlowEngine, SEGMENT_COORDS
 
-app = FastAPI(title="FrostFlow API", version="1.0.0")
+app = FastAPI(title="FrostFlow API", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -53,18 +53,50 @@ def risk_map(horizon_hours: int = Query(default=0, ge=0, le=24)) -> dict:
                 "start": seg.start,
                 "end": seg.end,
                 "coords": SEGMENT_COORDS[seg.segment_id],
+                "surface_type": seg.surface_type,
+                "slope_pct": seg.slope_pct,
+                "drainage_quality": seg.drainage_quality,
+                "shading_exposure": seg.shading_exposure,
+                "foot_traffic_importance": seg.foot_traffic_importance,
+                "emergency_route": seg.emergency_route,
+                "accessible_route": seg.accessible_route,
+                "main_corridor": seg.main_corridor,
                 "risk_score": cond.risk_score,
+                "weather_risk": cond.weather_risk,
+                "structural_risk": cond.structural_risk,
+                "reports_risk": cond.reports_risk,
+                "treatment_adjustment": cond.treatment_adjustment,
                 "confidence": cond.confidence,
                 "reason": cond.reason,
                 "reports_count": cond.reports_count,
                 "treated": cond.treated,
+                "status": cond.status,
+                "display_color": cond.display_color,
+                "risk_peak_hour": cond.risk_peak_hour,
+                "risk_peak_score": cond.risk_peak_score,
+                "recommended_pretreat_hour": cond.recommended_pretreat_hour,
             }
         )
+
+    critical_routes = {
+        "emergency": [s["segment_id"] for s in segments if s["emergency_route"]],
+        "accessible": [s["segment_id"] for s in segments if s["accessible_route"]],
+        "main_corridors": [s["segment_id"] for s in segments if s["main_corridor"]],
+    }
+
     return {
         "horizon_hours": horizon_hours,
         "active_warning": engine.warning_banner(horizon_hours),
         "segments": segments,
         "nodes": sorted({s["start"] for s in segments} | {s["end"] for s in segments}),
+        "critical_routes": critical_routes,
+        "control_loop": [
+            "prediction",
+            "routing",
+            "reporting",
+            "treatment",
+            "recalculation",
+        ],
     }
 
 
@@ -103,8 +135,32 @@ def report(payload: ReportIn) -> dict:
 
 
 @app.get("/maintenance-plan")
-def maintenance_plan(horizon_hours: int = 6) -> dict:
+def maintenance_plan(horizon_hours: int = Query(default=6, ge=0, le=24)) -> dict:
     return engine.maintenance_plan(horizon_hours)
+
+
+@app.get("/timeline-preview")
+def timeline_preview() -> dict:
+    segments = engine.load_segments()
+    now_risk = engine.compute_risk_map(0)
+    timeline = engine.timeline_insights(segments=segments, reports=engine.recent_reports())
+    payload = []
+    for seg in segments:
+        current = now_risk[seg.segment_id]
+        insight = timeline[seg.segment_id]
+        payload.append(
+            {
+                "segment_id": seg.segment_id,
+                "name": seg.name,
+                "status": current.status,
+                "display_color": current.display_color,
+                "current_risk": current.risk_score,
+                "peak_hour": insight["peak_hour"],
+                "peak_risk": insight["peak_risk"],
+                "recommended_pretreat_hour": insight["recommended_pretreat_hour"],
+            }
+        )
+    return {"segments": payload, "hours_considered": [0, 6, 12, 18, 24]}
 
 
 @app.post("/mark-treated")
