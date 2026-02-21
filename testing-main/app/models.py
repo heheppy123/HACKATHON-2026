@@ -30,6 +30,7 @@ class Segment:
     emergency_route: bool = False
     accessible_route: bool = False
     main_corridor: bool = False
+    wind_corridor: bool = False
 
 
 @dataclass
@@ -49,6 +50,24 @@ class SegmentCondition:
     risk_peak_hour: int
     risk_peak_score: float
     recommended_pretreat_hour: int
+    refreeze_likelihood: float
+
+
+@dataclass
+class LiveWeather:
+    source: str
+    location: str
+    observed_at: datetime
+    temperature_c: float
+    feels_like_c: float
+    precipitation_mm: float
+    snowfall_mm: float
+    freeze_thaw_warning: bool
+    surface_icing_risk: str
+    classification: str
+    risk_multiplier: float
+    treatment_recommendation: str
+    summary: str
 
 
 @dataclass
