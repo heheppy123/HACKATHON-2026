@@ -3,26 +3,42 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FrostFlow Live UI</title>
+    <title>FrostFlow Infrastructure Control Center</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <div class="bg-glow"></div>
-    <header class="topbar glass">
+    <div class="grid-bg" aria-hidden="true"></div>
+
+    <header class="topbar card">
       <div>
-        <h1>❄️ FrostFlow</h1>
-        <p>Predictive Winter Safety + Salt-Minimization Digital Twin</p>
+        <h1>FrostFlow Infrastructure Control Center</h1>
+        <p>Civil and environmental engineering decision-support for winter campus operations</p>
       </div>
-      <div class="pill">Live API UI</div>
+      <div class="warning-wrap">
+        <span class="eyebrow">Active Advisory</span>
+        <div id="warningBanner" class="alert">Loading forecast...</div>
+      </div>
     </header>
 
+    <section class="card loop-card">
+      <h2>Closed-Loop Engineering Control</h2>
+      <div id="loopSteps" class="loop-steps">
+        <div id="loop-prediction" class="loop-step">Prediction</div>
+        <div id="loop-routing" class="loop-step">Routing</div>
+        <div id="loop-reporting" class="loop-step">Reporting</div>
+        <div id="loop-treatment" class="loop-step">Treatment</div>
+        <div id="loop-recalculation" class="loop-step">Recalculation</div>
+      </div>
+    </section>
+
     <main class="layout">
-      <section class="left-panel glass">
-        <h2>Student Controls</h2>
-        <label>Start</label>
+      <aside class="panel card">
+        <h2>Operational Controls</h2>
+
+        <label>Start node</label>
         <select id="startSelect"></select>
 
-        <label>Destination</label>
+        <label>Destination node</label>
         <select id="endSelect"></select>
 
         <div class="row">
@@ -30,32 +46,47 @@
           <button id="shortestBtn">Shortest Route</button>
         </div>
 
-        <label class="toggle-row"><input type="checkbox" id="avoidSteepToggle" /> Avoid steep paths</label>
-        <label class="toggle-row"><input type="checkbox" id="preferClearedToggle" checked /> Prefer cleared paths</label>
+        <label class="toggle-row"><input type="checkbox" id="avoidSteepToggle" /> Avoid steep segments</label>
+        <label class="toggle-row"><input type="checkbox" id="preferClearedToggle" checked /> Prefer treated segments</label>
 
-        <label>Timeline Preview: +<span id="timelineLabel">0</span>h</label>
+        <label>Forecast horizon: +<span id="timelineLabel">0</span>h</label>
         <input id="timeline" type="range" min="0" max="24" step="6" value="0" />
 
-        <button id="routeBtn" class="primary">Plan Safe Route</button>
+        <button id="routeBtn" class="primary">Plan route</button>
 
-        <h3>Hazard Report</h3>
-        <p class="small">Select a segment on map first, then submit:</p>
+        <h3>Field Reports</h3>
+        <p class="small">Select a segment on the map, then submit an observation:</p>
         <div class="report-grid">
-          <button data-report="Icy">❄️ Icy</button>
-          <button data-report="Slushy">💧 Slushy</button>
-          <button data-report="Clear">✅ Clear</button>
-          <button data-report="Salted">🧂 Salted</button>
+          <button data-report="Icy">Icy</button>
+          <button data-report="Slushy">Slushy</button>
+          <button data-report="Clear">Clear</button>
+          <button data-report="Salted">Salted</button>
         </div>
         <p id="reportStatus" class="status"></p>
-      </section>
 
-      <section class="map-panel glass">
-        <div id="warningBanner" class="alert">Loading warning...</div>
+        <h3>Route Summary</h3>
+        <p id="routeText" class="small">Plan a route to view the optimization details.</p>
+      </aside>
+
+      <section class="map-panel card">
+        <div class="map-header">
+          <h2>Engineering Risk Map</h2>
+          <div class="legend">
+            <span><i class="dot red"></i>Confirmed hazard</span>
+            <span><i class="dot yellow"></i>Caution</span>
+            <span><i class="dot green"></i>Clear/treated monitor</span>
+            <span><i class="dot blue"></i>Treated stable</span>
+            <span><i class="line-key emergency"></i>Emergency route</span>
+            <span><i class="line-key accessible"></i>Accessible route</span>
+            <span><i class="line-key corridor"></i>Main corridor</span>
+          </div>
+        </div>
+
         <svg viewBox="0 0 700 420" class="campus-map" aria-label="Campus risk map">
           <defs>
             <linearGradient id="routeGrad" x1="0" x2="1">
-              <stop offset="0%" stop-color="#66e0ff" />
-              <stop offset="100%" stop-color="#9d7bff" />
+              <stop offset="0%" stop-color="#0e7fcf" />
+              <stop offset="100%" stop-color="#2ca58d" />
             </linearGradient>
           </defs>
           <line id="S1" x1="120" y1="260" x2="250" y2="220" class="segment" />
@@ -70,28 +101,59 @@
           <circle cx="500" cy="250" r="10" class="node" /><text x="470" y="281">Library</text>
           <circle cx="620" cy="190" r="10" class="node" /><text x="607" y="220">HUB</text>
         </svg>
-        <p id="segmentDetails" class="small"></p>
+
+        <p id="segmentDetails" class="small">Click a segment to inspect structural and forecast properties.</p>
+
+        <h3>Timeline Preview (Peak Risk and Pre-treatment)</h3>
+        <table class="timeline-table">
+          <thead>
+            <tr>
+              <th>Segment</th>
+              <th>Status</th>
+              <th>Peak</th>
+              <th>Pre-treat</th>
+            </tr>
+          </thead>
+          <tbody id="timelineBody"></tbody>
+        </table>
       </section>
 
-      <section class="right-panel glass">
+      <aside class="panel card">
         <div class="row split">
-          <h2>Facilities Mode</h2>
-          <label class="toggle-row"><input type="checkbox" id="maintenanceToggle" /> ON</label>
+          <h2>Facilities Operations</h2>
+          <label class="toggle-row"><input type="checkbox" id="maintenanceToggle" checked /> Enabled</label>
         </div>
 
-        <h3>Route Details</h3>
-        <p id="routeText" class="small">Plan a route to view details.</p>
+        <h3>Critical Routes</h3>
+        <div class="critical-grid">
+          <div>
+            <span class="eyebrow">Emergency</span>
+            <ul id="emergencyRouteList"></ul>
+          </div>
+          <div>
+            <span class="eyebrow">Accessible</span>
+            <ul id="accessibleRouteList"></ul>
+          </div>
+          <div>
+            <span class="eyebrow">Main Corridors</span>
+            <ul id="corridorRouteList"></ul>
+          </div>
+        </div>
 
-        <h3>Top Hazard Segments</h3>
+        <h3>Priority Treatment Plan</h3>
         <ol id="hazardList"></ol>
+        <p id="maintenanceLoop" class="small"></p>
 
-        <h3>Environmental Impact</h3>
+        <h3>Environmental Metrics</h3>
         <div class="stats">
-          <div><span>Salt used</span><strong id="rockSalt"></strong></div>
-          <div><span>Brine equivalent</span><strong id="brineSalt"></strong></div>
-          <div><span>Chloride reduction</span><strong id="reduction"></strong></div>
+          <div><span>Optimized treatment mass</span><strong id="optimizedMass"></strong></div>
+          <div><span>Blanket treatment mass</span><strong id="blanketMass"></strong></div>
+          <div><span>Material saved</span><strong id="materialSaved"></strong></div>
+          <div><span>Chloride runoff reduction</span><strong id="runoffReduction"></strong></div>
+          <div><span>Pollution avoided</span><strong id="pollutionAvoided"></strong></div>
+          <div><span>Sustainability index</span><strong id="sustainabilityIndex"></strong></div>
         </div>
-      </section>
+      </aside>
     </main>
 
     <script src="app.js" defer></script>
