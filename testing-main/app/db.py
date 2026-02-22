@@ -14,7 +14,7 @@ SEED_SEGMENTS = [
         "SUB to Quad",
         "SUB",
         "Quad",
-        230.0,
+        220.0,
         "concrete",
         2.0,
         "fair",
@@ -32,7 +32,7 @@ SEED_SEGMENTS = [
         "Quad to CAB",
         "Quad",
         "CAB",
-        180.0,
+        280.0,
         "brick",
         1.5,
         "poor",
@@ -47,10 +47,10 @@ SEED_SEGMENTS = [
     ),
     (
         "S3",
-        "CAB to Library",
+        "CAB to Cameron Library",
         "CAB",
         "Library",
-        140.0,
+        240.0,
         "bridge",
         4.2,
         "fair",
@@ -65,10 +65,10 @@ SEED_SEGMENTS = [
     ),
     (
         "S4",
-        "SUB to Library",
+        "SUB to Cameron Library",
         "SUB",
         "Library",
-        200.0,
+        650.0,
         "asphalt",
         0.5,
         "good",
@@ -83,10 +83,10 @@ SEED_SEGMENTS = [
     ),
     (
         "S5",
-        "Library to HUB",
+        "Cameron Library to HUB",
         "Library",
         "HUB",
-        260.0,
+        300.0,
         "concrete",
         3.0,
         "poor",
@@ -104,7 +104,7 @@ SEED_SEGMENTS = [
         "CAB to HUB",
         "CAB",
         "HUB",
-        220.0,
+        700.0,
         "asphalt",
         2.5,
         "good",
@@ -167,6 +167,10 @@ def init_db() -> None:
             );
             """
         )
+        # Demo control room behavior: start each server session from a clean
+        # reporting slate so map colors begin clear.
+        conn.execute("DELETE FROM Reports")
+        conn.execute("UPDATE WalkwaySegments SET treatment_status = 0")
         _ensure_segment_schema(conn)
 
         existing = conn.execute("SELECT COUNT(*) c FROM WalkwaySegments").fetchone()["c"]
@@ -245,32 +249,32 @@ def _backfill_segment_profiles(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
         UPDATE WalkwaySegments
-        SET surface_type = 'concrete', drainage_quality = 'fair', shading_exposure = 0.72, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 1, main_corridor = 1, wind_corridor = 0
+        SET name = 'SUB to Quad', distance_m = 220.0, surface_type = 'concrete', drainage_quality = 'fair', shading_exposure = 0.72, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 1, main_corridor = 1, wind_corridor = 0
         WHERE id = 'S1'
         AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
 
         UPDATE WalkwaySegments
-        SET surface_type = 'brick', drainage_quality = 'poor', shading_exposure = 0.68, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 1, main_corridor = 1, wind_corridor = 1
+        SET name = 'Quad to CAB', distance_m = 280.0, surface_type = 'brick', drainage_quality = 'poor', shading_exposure = 0.68, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 1, main_corridor = 1, wind_corridor = 1
         WHERE id = 'S2'
         AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
 
         UPDATE WalkwaySegments
-        SET surface_type = 'bridge', drainage_quality = 'fair', shading_exposure = 0.34, foot_traffic_importance = 4, emergency_route = 0, accessible_route = 0, main_corridor = 0, wind_corridor = 1
+        SET name = 'CAB to Cameron Library', distance_m = 240.0, surface_type = 'bridge', drainage_quality = 'fair', shading_exposure = 0.34, foot_traffic_importance = 4, emergency_route = 0, accessible_route = 0, main_corridor = 0, wind_corridor = 1
         WHERE id = 'S3'
         AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
 
         UPDATE WalkwaySegments
-        SET surface_type = 'asphalt', drainage_quality = 'good', shading_exposure = 0.25, foot_traffic_importance = 3, emergency_route = 1, accessible_route = 1, main_corridor = 0, wind_corridor = 0
+        SET name = 'SUB to Cameron Library', distance_m = 650.0, surface_type = 'asphalt', drainage_quality = 'good', shading_exposure = 0.25, foot_traffic_importance = 3, emergency_route = 1, accessible_route = 1, main_corridor = 0, wind_corridor = 0
         WHERE id = 'S4'
         AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
 
         UPDATE WalkwaySegments
-        SET surface_type = 'concrete', drainage_quality = 'poor', shading_exposure = 0.81, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 0, main_corridor = 1, wind_corridor = 1
+        SET name = 'Cameron Library to HUB', distance_m = 300.0, surface_type = 'concrete', drainage_quality = 'poor', shading_exposure = 0.81, foot_traffic_importance = 5, emergency_route = 1, accessible_route = 0, main_corridor = 1, wind_corridor = 1
         WHERE id = 'S5'
         AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
 
         UPDATE WalkwaySegments
-        SET surface_type = 'asphalt', drainage_quality = 'good', shading_exposure = 0.57, foot_traffic_importance = 4, emergency_route = 0, accessible_route = 1, main_corridor = 1, wind_corridor = 1
+        SET name = 'CAB to HUB', distance_m = 700.0, surface_type = 'asphalt', drainage_quality = 'good', shading_exposure = 0.57, foot_traffic_importance = 4, emergency_route = 0, accessible_route = 1, main_corridor = 1, wind_corridor = 1
         WHERE id = 'S6'
         AND surface_type = 'concrete' AND drainage_quality = 'fair' AND shading_exposure = 0.5 AND foot_traffic_importance = 3;
         """
