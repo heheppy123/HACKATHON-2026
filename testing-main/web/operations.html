@@ -27,6 +27,20 @@
       <div id="warningBanner" class="alert">Loading advisory...</div>
     </section>
 
+    <section class="card status-banner">
+      <p class="eyebrow">Segment Status Logic</p>
+      <div class="status-pill-row">
+        <span class="status-pill red">Confirmed Hazard</span>
+        <span class="status-pill yellow">Caution</span>
+        <span class="status-pill blue">Treated Monitor</span>
+        <span class="status-pill teal">Treated Stable</span>
+        <span class="status-pill green">Clear</span>
+      </div>
+      <p class="small">
+        Single field report raises to caution. Multiple reports confirm hazard. Treated segments remain safe unless risk exceeds 0.85.
+      </p>
+    </section>
+
     <main class="page-grid operations-grid">
       <aside class="card panel">
         <h2>Operations Controls</h2>
@@ -36,30 +50,11 @@
         <label class="toggle-row"><input type="checkbox" id="stormModeToggle" /> Storm response mode</label>
         <p class="small" id="stormInfo">Storm mode off. Standard optimization applied.</p>
 
-        <h3>GIS Layers</h3>
+        <h3>Operational Overlays</h3>
         <label class="toggle-row"><input type="checkbox" id="layerHazard" checked /> Hazard zones</label>
         <label class="toggle-row"><input type="checkbox" id="layerTreated" checked /> Treated routes</label>
-        <label class="toggle-row"><input type="checkbox" id="layerEmergency" checked /> Emergency routes</label>
-        <label class="toggle-row"><input type="checkbox" id="layerAccessible" checked /> Accessible routes</label>
-        <label class="toggle-row"><input type="checkbox" id="layerCorridor" checked /> Main corridors</label>
         <label class="toggle-row"><input type="checkbox" id="layerDrainage" checked /> Drainage problem areas</label>
         <label class="toggle-row"><input type="checkbox" id="layerShading" checked /> High shading zones</label>
-
-        <h3>Critical Routes</h3>
-        <div class="critical-grid">
-          <div>
-            <span class="eyebrow">Emergency</span>
-            <ul id="emergencyRouteList"></ul>
-          </div>
-          <div>
-            <span class="eyebrow">Accessible</span>
-            <ul id="accessibleRouteList"></ul>
-          </div>
-          <div>
-            <span class="eyebrow">Corridors</span>
-            <ul id="corridorRouteList"></ul>
-          </div>
-        </div>
       </aside>
 
       <section class="card map-card">
@@ -68,10 +63,9 @@
           <div class="legend">
             <span><i class="dot red"></i>Hazard</span>
             <span><i class="dot yellow"></i>Caution</span>
-            <span><i class="dot blue"></i>Treated route</span>
-            <span><i class="line-key emergency"></i>Emergency</span>
-            <span><i class="line-key accessible"></i>Accessible</span>
-            <span><i class="line-key corridor"></i>Corridor</span>
+            <span><i class="dot blue"></i>Treated monitor</span>
+            <span><i class="dot teal"></i>Treated stable</span>
+            <span><i class="dot green"></i>Clear</span>
           </div>
         </div>
 
