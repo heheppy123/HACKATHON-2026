@@ -12,6 +12,7 @@ const SEGMENT_ROUTE_LOOKUP = {
 const LOOP_SEQUENCE = ["prediction", "routing", "reporting", "treatment", "recalculation"];
 const SHARED_HORIZON_KEY = "frostflow:shared-horizon";
 const SHARED_SYNC_KEY = "frostflow:sync-event";
+const SHARED_OVERLAY_KEY = "frostflow:overlay-options";
 const syncChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("frostflow-sync") : null;
 
 const COLOR_BY_STATUS = {
@@ -81,6 +82,33 @@ function applySharedHorizon() {
     document.getElementById("timeline").value = String(shared);
     document.getElementById("timelineLabel").textContent = String(shared);
   }
+}
+
+function currentOverlayOptions() {
+  return {
+    hazard: document.getElementById("layerHazard").checked,
+    treated: document.getElementById("layerTreated").checked,
+    drainage: document.getElementById("layerDrainage").checked,
+    shading: document.getElementById("layerShading").checked,
+  };
+}
+
+function applySharedOverlays() {
+  const raw = localStorage.getItem(SHARED_OVERLAY_KEY);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.hazard === "boolean") document.getElementById("layerHazard").checked = parsed.hazard;
+    if (typeof parsed.treated === "boolean") document.getElementById("layerTreated").checked = parsed.treated;
+    if (typeof parsed.drainage === "boolean") document.getElementById("layerDrainage").checked = parsed.drainage;
+    if (typeof parsed.shading === "boolean") document.getElementById("layerShading").checked = parsed.shading;
+  } catch {
+    // Ignore malformed storage.
+  }
+}
+
+function persistOverlays() {
+  localStorage.setItem(SHARED_OVERLAY_KEY, JSON.stringify(currentOverlayOptions()));
 }
 
 function renderRouteOutput(body) {
@@ -212,6 +240,7 @@ function renderTimeline(segments) {
 }
 
 async function planRoute() {
+  const layers = currentOverlayOptions();
   const params = new URLSearchParams({
     start: document.getElementById("startSelect").value,
     end: document.getElementById("endSelect").value,
@@ -219,6 +248,10 @@ async function planRoute() {
     avoid_steep: "false",
     prefer_cleared: String(document.getElementById("preferClearedToggle").checked),
     horizon_hours: String(selectedHorizon()),
+    hazard_layer: String(layers.hazard),
+    treated_layer: String(layers.treated),
+    drainage_layer: String(layers.drainage),
+    shading_layer: String(layers.shading),
   });
   const response = await fetch(`${API_BASE}/route?${params.toString()}`);
   const body = await response.json();
@@ -284,6 +317,12 @@ function attachActions() {
     if (refreshTimer) clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => refreshAll(), 150);
   };
+  ["layerHazard", "layerTreated", "layerDrainage", "layerShading"].forEach((id) => {
+    document.getElementById(id).onchange = () => {
+      persistOverlays();
+      publishSync("overlay_updated", currentOverlayOptions());
+    };
+  });
   document.getElementById("routeBtn").onclick = () => planRoute();
   document.querySelectorAll("[data-report]").forEach((button) => {
     button.onclick = () => submitReport(button.getAttribute("data-report"));
@@ -297,15 +336,22 @@ function attachActions() {
     if (event.key === SHARED_SYNC_KEY && event.newValue) {
       refreshAll();
     }
+    if (event.key === SHARED_OVERLAY_KEY && event.newValue) {
+      applySharedOverlays();
+    }
   });
 
   if (syncChannel) {
-    syncChannel.onmessage = () => refreshAll();
+    syncChannel.onmessage = () => {
+      applySharedOverlays();
+      refreshAll();
+    };
   }
 }
 
 async function boot() {
   applySharedHorizon();
+  applySharedOverlays();
   attachActions();
   renderLoopSteps();
   try {
