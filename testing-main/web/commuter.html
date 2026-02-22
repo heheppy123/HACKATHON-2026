@@ -27,6 +27,20 @@
       <div id="warningBanner" class="alert">Loading advisory...</div>
     </section>
 
+    <section class="card status-banner">
+      <p class="eyebrow">Status Meaning</p>
+      <div class="status-pill-row">
+        <span class="status-pill red">Confirmed Hazard</span>
+        <span class="status-pill yellow">Caution</span>
+        <span class="status-pill blue">Treated Monitor</span>
+        <span class="status-pill teal">Treated Stable</span>
+        <span class="status-pill green">Clear</span>
+      </div>
+      <p class="small">
+        Segment state is single-status only. Field reports update status in real time and sync to the operations dashboard.
+      </p>
+    </section>
+
     <section class="card loop-card compact">
       <h2>Closed-Loop Progress</h2>
       <div class="loop-steps">
@@ -52,14 +66,18 @@
           <button id="shortestBtn">Shortest Route</button>
         </div>
 
-        <label class="toggle-row"><input type="checkbox" id="avoidSteepToggle" /> Avoid steep segments</label>
         <label class="toggle-row"><input type="checkbox" id="preferClearedToggle" checked /> Prefer treated segments</label>
 
         <label>Forecast horizon: +<span id="timelineLabel">0</span>h</label>
         <input id="timeline" type="range" min="0" max="24" step="6" value="0" />
 
         <button id="routeBtn" class="primary">Plan Route</button>
-        <p id="routeText" class="small">Plan a route to view analysis.</p>
+        <section class="route-output card">
+          <p class="eyebrow">Safest Route Output</p>
+          <h3 id="routeHeadline">Awaiting route plan</h3>
+          <p id="routeText" class="small">Plan a route to view analysis.</p>
+          <div id="routePathChips" class="route-chips"></div>
+        </section>
 
         <h3>Field Report</h3>
         <p class="small">Select a segment on map and submit what you observe.</p>
