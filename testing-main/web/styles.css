@@ -62,6 +62,53 @@ body {
   padding: 10px 14px 14px;
 }
 
+.status-banner {
+  margin: 0 16px 14px;
+  padding: 12px 14px;
+}
+
+.status-pill-row {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.status-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.status-pill.red {
+  background: var(--danger);
+  color: #fff;
+}
+
+.status-pill.yellow {
+  background: var(--caution);
+  color: #4b3302;
+}
+
+.status-pill.blue {
+  background: var(--treated);
+  color: #fff;
+}
+
+.status-pill.teal {
+  background: var(--teal);
+  color: #fff;
+}
+
+.status-pill.green {
+  background: var(--safe);
+  color: #fff;
+}
+
 .eyebrow {
   margin: 0;
   color: #9ac4eb;
@@ -271,6 +318,41 @@ button:hover {
   color: #a3e6bc;
 }
 
+.route-output {
+  margin-top: 10px;
+  padding: 12px;
+  border: 1px solid rgba(141, 212, 255, 0.45);
+  background: linear-gradient(160deg, rgba(20, 65, 128, 0.62), rgba(8, 38, 84, 0.78));
+}
+
+.route-output h3 {
+  margin-top: 4px;
+}
+
+.route-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.route-chip {
+  display: inline-block;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(96, 190, 255, 0.22);
+  border: 1px solid rgba(133, 217, 255, 0.58);
+  color: #e8f7ff;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.route-arrow {
+  color: #8fd8ff;
+  font-weight: 800;
+  align-self: center;
+}
+
 .map-header {
   display: grid;
   gap: 8px;
@@ -306,6 +388,10 @@ button:hover {
 
 .dot.blue {
   background: var(--treated);
+}
+
+.dot.teal {
+  background: var(--teal);
 }
 
 .line-key {
@@ -478,9 +564,13 @@ text {
   color: #fff;
 }
 
-.badge.blue,
-.badge.teal {
+.badge.blue {
   background: var(--treated);
+  color: #fff;
+}
+
+.badge.teal {
+  background: var(--teal);
   color: #fff;
 }
 
