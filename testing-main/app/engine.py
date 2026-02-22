@@ -31,15 +31,9 @@ DRAINAGE_RISK_FACTOR = {
 STATUS_COLOR = {
     "confirmed_hazard": "red",
     "caution": "yellow",
+    "treated_monitor": "blue",
+    "treated_stable": "teal",
     "clear": "green",
-    "treated_stable": "blue",
-    "treated_monitor": "green",
-}
-
-TREATMENT_BASE_RATE_KG_PER_M = {
-    "brine": 0.09,
-    "salt": 0.16,
-    "sand": 0.13,
 }
 
 CHLORIDE_FACTOR = {
@@ -48,9 +42,25 @@ CHLORIDE_FACTOR = {
     "sand": 0.02,
 }
 
-BLANKET_SALT_RATE_KG_PER_M = 0.18
+BRINE_DENSITY_KG_PER_L = 1.2
+BLANKET_SALT_G_PER_M2 = 35.0
 RUNOFF_RATIO = 0.42
 TIMELINE_STEPS = [0, 6, 12, 18, 24]
+
+TREATMENT_UNIT_COST = {
+    "salt": 0.42,
+    "brine": 0.18,
+    "sand": 0.16,
+}
+
+SEGMENT_WIDTH_M = {
+    "S1": 5.0,
+    "S2": 6.0,
+    "S3": 5.5,
+    "S4": 7.0,
+    "S5": 6.5,
+    "S6": 6.0,
+}
 
 SEGMENT_COORDS = {
     "S1": [(53.5230, -113.5260), (53.5236, -113.5247)],
@@ -61,8 +71,24 @@ SEGMENT_COORDS = {
     "S6": [(53.5238, -113.5231), (53.5241, -113.5205)],
 }
 
+SURFACE_TREATMENT_FACTOR = {
+    "asphalt": 0.92,
+    "concrete": 1.0,
+    "brick": 1.12,
+    "bridge": 1.18,
+}
+
+DRAINAGE_TREATMENT_FACTOR = {
+    "good": 0.94,
+    "fair": 1.04,
+    "poor": 1.16,
+}
+
 
 class FrostFlowEngine:
+    def __init__(self) -> None:
+        self.session_started_at = datetime.now(timezone.utc) - timedelta(seconds=5)
+
     def load_segments(self) -> List[Segment]:
         rows = fetch_rows("SELECT * FROM WalkwaySegments")
         return [
@@ -113,6 +139,9 @@ class FrostFlowEngine:
         )
         bucket: Dict[str, list[dict]] = {}
         for row in rows:
+            report_ts = self._as_utc(datetime.fromisoformat(row["timestamp"]))
+            if report_ts < self.session_started_at:
+                continue
             bucket.setdefault(row["segment_id"], []).append(dict(row))
         return bucket
 
@@ -205,6 +234,14 @@ class FrostFlowEngine:
         prev: Dict[str, tuple[str, str] | None] = {n: None for n in adj}
         dist[start] = 0.0
 
+        status_factor = {
+            "confirmed_hazard": 1.9,
+            "caution": 1.35,
+            "treated_monitor": 0.9,
+            "treated_stable": 0.74,
+            "clear": 1.0,
+        }
+
         while pq:
             cur, node = heappop(pq)
             if cur > dist[node]:
@@ -213,21 +250,32 @@ class FrostFlowEngine:
                 break
 
             for nxt, seg in adj[node]:
-                segment_condition = risk_map[seg.segment_id]
+                condition = risk_map[seg.segment_id]
                 base = seg.distance_m
                 criticality = self._criticality(seg)
 
                 if safest:
-                    base *= 1 + (segment_condition.risk_score * 1.35)
-                    base *= 1 - (criticality * 0.1)
-                    if segment_condition.status == "confirmed_hazard":
-                        base *= 1.25
+                    base *= 1 + (condition.risk_score * 1.55)
+                    base *= status_factor.get(condition.status, 1.0)
+                    base *= 1 - (criticality * 0.08)
+
+                    if condition.treated and condition.status in {"treated_monitor", "treated_stable"}:
+                        base *= 0.78
+                    if seg.accessible_route and seg.slope_pct <= 2.2:
+                        base *= 0.9
+                    if seg.slope_pct > 4:
+                        base *= 1.18
+                else:
+                    base *= 1 + (condition.risk_score * 0.2)
+
                 if avoid_steep and seg.slope_pct > 3:
-                    base *= 1.32
-                if prefer_cleared and seg.treated:
-                    base *= 0.82
-                if avoid_steep and seg.accessible_route and seg.slope_pct <= 2:
-                    base *= 0.92
+                    base *= 1.28
+
+                if prefer_cleared:
+                    if condition.status in {"clear", "treated_monitor", "treated_stable"}:
+                        base *= 0.9
+                    if condition.status in {"caution", "confirmed_hazard"}:
+                        base *= 1.12
 
                 new_cost = cur + base
                 if new_cost < dist[nxt]:
@@ -252,20 +300,20 @@ class FrostFlowEngine:
         segs.reverse()
 
         explanation = (
-            "Safest route uses engineering risk, treatment state, and priority corridors."
+            "Safest route uses winter risk, treated-state bonuses, slope/accessibility limits, and corridor criticality."
             if safest
-            else "Shortest route prioritizes distance while keeping critical corridors available."
+            else "Shortest route prioritizes distance with a light winter-risk penalty."
         )
         return RouteResult(nodes=nodes, segments=segs, weighted_cost=round(dist[end], 2), explanation=explanation)
 
-    def maintenance_plan(self, horizon_hours: int = 6) -> dict:
+    def maintenance_plan(self, horizon_hours: int = 6, storm_mode: bool = False) -> dict:
         segments = self.load_segments()
         risk_map = self.compute_risk_map(horizon_hours)
         weather = self.weather_for_horizon(horizon_hours)
 
         ranked = sorted(
             segments,
-            key=lambda s: self._priority_index(s, risk_map[s.segment_id]),
+            key=lambda s: self._priority_index(s, risk_map[s.segment_id], storm_mode=storm_mode),
             reverse=True,
         )
 
@@ -275,18 +323,32 @@ class FrostFlowEngine:
         optimized_chloride_kg = 0.0
         blanket_chloride_kg = 0.0
         total_saved_kg = 0.0
+        optimized_cost = 0.0
+        blanket_cost = 0.0
+        oversalt_penalty_kg = 0.0
 
         for seg in ranked:
             condition = risk_map[seg.segment_id]
             treatment = self._recommended_treatment(condition.risk_score, weather.temp_c)
-            required_kg = self._treatment_mass_kg(seg, condition.risk_score, treatment)
+            treatment_calc = self._treatment_requirement(seg, condition, treatment, weather.temp_c)
+
+            required_kg = treatment_calc["required_kg"]
             if seg.treated:
-                required_kg *= 0.4
+                retreatment_factor = 0.45 if condition.risk_score >= 0.55 else 0.2
+                required_kg *= retreatment_factor
+                treatment_calc["engineering_basis"].append(
+                    f"treated segment top-up factor {retreatment_factor:.2f} applied"
+                )
             required_kg = round(required_kg, 1)
-            blanket_kg = round(seg.distance_m * BLANKET_SALT_RATE_KG_PER_M, 1)
+
+            blanket_kg = round(self._blanket_salt_mass_kg(seg), 1)
             saved_kg = round(max(0.0, blanket_kg - required_kg), 1)
 
-            priority = round(self._priority_index(seg, condition), 3)
+            if treatment == "salt" and treatment_calc["adjusted_rate"] > BLANKET_SALT_G_PER_M2:
+                excess_g_m2 = treatment_calc["adjusted_rate"] - BLANKET_SALT_G_PER_M2
+                oversalt_penalty_kg += (treatment_calc["area_m2"] * excess_g_m2) / 1000
+
+            priority = round(self._priority_index(seg, condition, storm_mode=storm_mode), 3)
             peak_hour = condition.risk_peak_hour
             pretreat_hour = condition.recommended_pretreat_hour
             eta_minutes = 30 if peak_hour <= horizon_hours else int((peak_hour - horizon_hours) * 60)
@@ -298,6 +360,8 @@ class FrostFlowEngine:
                 roles.append("accessible")
             if seg.main_corridor:
                 roles.append("main_corridor")
+
+            item_cost = required_kg * TREATMENT_UNIT_COST[treatment]
 
             ranked_payload.append(
                 {
@@ -319,11 +383,19 @@ class FrostFlowEngine:
                     "recommended_pretreat_hour": pretreat_hour,
                     "eta_to_ice_minutes": eta_minutes,
                     "recommended_treatment": treatment,
+                    "treated_area_m2": round(treatment_calc["area_m2"], 1),
+                    "treatment_rate_value": round(treatment_calc["adjusted_rate"], 1),
+                    "treatment_rate_unit": treatment_calc["rate_unit"],
                     "treatment_required_kg": required_kg,
                     "blanket_treatment_kg": blanket_kg,
                     "kg_saved_vs_blanket": saved_kg,
-                    "salt_kg_if_rock_salt": blanket_kg,
-                    "salt_kg_if_brine": round(self._treatment_mass_kg(seg, condition.risk_score, "brine"), 1),
+                    "temperature_factor": round(treatment_calc["temperature_factor"], 3),
+                    "surface_factor": round(treatment_calc["surface_factor"], 3),
+                    "drainage_factor": round(treatment_calc["drainage_factor"], 3),
+                    "slope_safety_factor": round(treatment_calc["slope_factor"], 3),
+                    "combined_factor": round(treatment_calc["combined_factor"], 3),
+                    "estimated_material_cost": round(item_cost, 2),
+                    "engineering_basis": "; ".join(treatment_calc["engineering_basis"]),
                 }
             )
 
@@ -332,21 +404,31 @@ class FrostFlowEngine:
             optimized_chloride_kg += required_kg * CHLORIDE_FACTOR[treatment]
             blanket_chloride_kg += blanket_kg * CHLORIDE_FACTOR["salt"]
             total_saved_kg += saved_kg
+            optimized_cost += item_cost
+            blanket_cost += blanket_kg * TREATMENT_UNIT_COST["salt"]
 
         chloride_reduction_kg = max(0.0, blanket_chloride_kg - optimized_chloride_kg)
         chloride_reduction_pct = (chloride_reduction_kg / blanket_chloride_kg) * 100 if blanket_chloride_kg else 0.0
         runoff_reduction_kg = chloride_reduction_kg * RUNOFF_RATIO
         optimized_ratio_pct = (optimized_mass_kg / blanket_mass_kg) * 100 if blanket_mass_kg else 0.0
         saved_ratio_pct = (total_saved_kg / blanket_mass_kg) * 100 if blanket_mass_kg else 0.0
-        sustainability_index = min(100.0, max(0.0, 35 + (saved_ratio_pct * 0.4) + (chloride_reduction_pct * 0.45)))
+
+        oversalt_penalty_pct = (oversalt_penalty_kg / blanket_mass_kg) * 100 if blanket_mass_kg else 0.0
+        sustainability_index = min(
+            100.0,
+            max(
+                0.0,
+                40 + (saved_ratio_pct * 0.35) + (chloride_reduction_pct * 0.45) - (oversalt_penalty_pct * 0.5),
+            ),
+        )
 
         emergency_segments = [s.segment_id for s in segments if s.emergency_route]
         accessible_segments = [s.segment_id for s in segments if s.accessible_route]
         corridor_segments = [s.segment_id for s in segments if s.main_corridor]
-
         route_nodes = self._maintenance_route_nodes(ranked)
 
         return {
+            "storm_mode": storm_mode,
             "ranked_segments": ranked_payload[:6],
             "treatment_route_nodes": route_nodes,
             "critical_routes": {
@@ -366,19 +448,33 @@ class FrostFlowEngine:
                 "saved_mass_ratio_pct": round(saved_ratio_pct, 1),
                 "estimated_salt_use_kg": round(blanket_mass_kg, 1),
                 "brine_equivalent_kg": round(optimized_mass_kg, 1),
+                "optimized_material_cost": round(optimized_cost, 2),
+                "blanket_material_cost": round(blanket_cost, 2),
+                "material_cost_saved": round(max(0.0, blanket_cost - optimized_cost), 2),
+                "oversalting_penalty_kg": round(oversalt_penalty_kg, 2),
             },
         }
 
     def warning_banner(self, horizon_hours: int) -> str:
         weather = self.weather_for_horizon(horizon_hours)
         prev = self.weather_for_horizon(max(horizon_hours - 6, 0)) if horizon_hours >= 6 else self.previous_weather()
-        if prev.temp_c > 0 and weather.temp_c < 0:
-            return "Refreeze risk: temperatures crossing below 0C."
+
+        messages: list[str] = []
         if weather.temp_c <= -12:
-            return "Extreme cold regime: sand mix may be required over salt."
-        if weather.precip_mm > 0.5:
-            return "Precipitation expected: slip risk likely across exposed segments."
-        return "Conditions stable; continue engineering monitoring cycle."
+            messages.append("Extreme cold: sand recommended")
+        if -2 <= weather.temp_c <= 1:
+            messages.append("Near freezing: elevated icing risk")
+        if weather.precip_mm > 0.3:
+            messages.append("Precipitation loading: pretreatment advised")
+        if prev.temp_c > 0 and weather.temp_c < 0:
+            messages.append("Freeze-thaw refreeze warning")
+        if not messages:
+            messages.append("Conditions stable")
+
+        return (
+            f"Real-Time Winter Risk Conditions | Temp {weather.temp_c:.1f}C | "
+            + " | ".join(messages)
+        )
 
     def _evaluate_segment(
         self,
@@ -394,9 +490,7 @@ class FrostFlowEngine:
         reports_risk, hazard_reports, report_reasons = self._report_component(segment_reports, now)
         treatment_adjustment, treatment_reasons = self._treatment_adjustment(seg, weather)
 
-        risk = 0.05 + (0.52 * weather_risk) + (0.33 * structural_risk) + reports_risk + treatment_adjustment
-        if seg.emergency_route and risk >= 0.4:
-            risk += 0.04
+        risk = 0.04 + (0.49 * weather_risk) + (0.31 * structural_risk) + reports_risk + treatment_adjustment
         risk = max(0.0, min(1.0, risk))
 
         confidence = 0.48 + min(hazard_reports * 0.11, 0.33)
@@ -409,14 +503,15 @@ class FrostFlowEngine:
         confidence = max(0.2, min(0.97, confidence))
 
         status, display_color = self._classify_status(risk, hazard_reports, seg.treated)
-        reasons = (weather_reasons + structural_reasons + report_reasons + treatment_reasons)[:5]
+        reasons = (weather_reasons + structural_reasons + report_reasons + treatment_reasons)[:6]
 
         peak_hour = int((timeline_meta or {}).get("peak_hour", 0))
         peak_score = float((timeline_meta or {}).get("peak_risk", risk))
         pretreat_hour = int((timeline_meta or {}).get("recommended_pretreat_hour", 0))
-        refreeze_likelihood = 0.18
+
+        refreeze_likelihood = 0.16
         if previous_weather.temp_c > 0 and weather.temp_c < 0:
-            refreeze_likelihood += 0.42
+            refreeze_likelihood += 0.4
         if seg.shading_exposure >= 0.6:
             refreeze_likelihood += 0.12
         if seg.drainage_quality == "poor":
@@ -461,7 +556,7 @@ class FrostFlowEngine:
             reasons.append("active precipitation loading")
 
         if prev.temp_c > 0 and weather.temp_c < 0:
-            score += 0.20
+            score += 0.2
             reasons.append("freeze-thaw refreeze window")
 
         if prev.temp_c - weather.temp_c >= 4:
@@ -478,10 +573,15 @@ class FrostFlowEngine:
         traffic = (max(1, seg.foot_traffic_importance) / 5.0) * 0.07
 
         score = surface + slope + drainage + shade + traffic
-        reasons: list[str] = []
-        reasons.append(f"{seg.surface_type} surface behavior")
-        reasons.append(f"{seg.slope_pct:.1f}% slope loading")
-        reasons.append(f"{seg.drainage_quality} drainage")
+        reasons: list[str] = [
+            f"{seg.surface_type} surface behavior",
+            f"{seg.slope_pct:.1f}% slope loading",
+            f"{seg.drainage_quality} drainage",
+        ]
+
+        if seg.wind_corridor:
+            score += 0.07
+            reasons.append("wind corridor refreeze")
         if seg.shading_exposure >= 0.6:
             reasons.append("limited solar melting")
         if seg.accessible_route and seg.slope_pct > 2:
@@ -520,15 +620,19 @@ class FrostFlowEngine:
         if not seg.treated:
             return 0.0, []
 
-        effectiveness = -0.22
+        effectiveness = -0.24
         reasons = ["recent treatment effect"]
+
         if weather.temp_c <= -12:
-            effectiveness = -0.10
+            effectiveness = -0.09
             reasons.append("de-icer effectiveness reduced in extreme cold")
         elif weather.temp_c <= -8:
             effectiveness = -0.14
             reasons.append("reduced treatment effectiveness")
 
+        if weather.precip_mm > 0.5:
+            effectiveness += 0.05
+            reasons.append("fresh snowfall dilutes treatment")
         if seg.surface_type == "bridge":
             effectiveness += 0.04
             reasons.append("bridge deck cools quickly")
@@ -539,22 +643,50 @@ class FrostFlowEngine:
         return effectiveness, reasons
 
     def _classify_status(self, risk: float, hazard_reports: int, treated: bool) -> tuple[str, str]:
-        if treated and risk <= 0.35:
-            return "treated_stable", STATUS_COLOR["treated_stable"]
         if treated:
-            return "treated_monitor", STATUS_COLOR["treated_monitor"]
+            if (hazard_reports >= 2 and risk > 0.85) or risk >= 0.96:
+                return "confirmed_hazard", STATUS_COLOR["confirmed_hazard"]
+            if hazard_reports >= 1 or risk >= 0.78:
+                return "caution", STATUS_COLOR["caution"]
+            if risk >= 0.45:
+                return "treated_monitor", STATUS_COLOR["treated_monitor"]
+            return "treated_stable", STATUS_COLOR["treated_stable"]
+
         if hazard_reports >= 2:
             return "confirmed_hazard", STATUS_COLOR["confirmed_hazard"]
         if hazard_reports == 1:
             return "caution", STATUS_COLOR["caution"]
-        if risk >= 0.75:
+
+        if risk >= 0.92:
             return "confirmed_hazard", STATUS_COLOR["confirmed_hazard"]
-        if risk >= 0.5:
+        if risk >= 0.78:
             return "caution", STATUS_COLOR["caution"]
         return "clear", STATUS_COLOR["clear"]
 
-    def _priority_index(self, seg: Segment, condition: SegmentCondition) -> float:
-        return (condition.risk_score * 0.58) + (self._criticality(seg) * 0.27) + ((seg.foot_traffic_importance / 5) * 0.15)
+    def _priority_index(self, seg: Segment, condition: SegmentCondition, storm_mode: bool = False) -> float:
+        score = (
+            (condition.risk_score * 0.55)
+            + (self._criticality(seg) * 0.28)
+            + ((seg.foot_traffic_importance / 5) * 0.17)
+        )
+
+        if condition.status == "confirmed_hazard":
+            score += 0.12
+        elif condition.status == "caution":
+            score += 0.05
+
+        if storm_mode:
+            if seg.emergency_route:
+                score += 0.12
+            if seg.accessible_route:
+                score += 0.08
+            if seg.main_corridor:
+                score += 0.06
+
+        if seg.treated and condition.status == "treated_stable":
+            score -= 0.08
+
+        return max(0.0, min(1.5, score))
 
     def _criticality(self, seg: Segment) -> float:
         criticality = 0.0
@@ -570,18 +702,97 @@ class FrostFlowEngine:
     def _recommended_treatment(self, risk_score: float, temp_c: float) -> str:
         if temp_c <= -12:
             return "sand"
-        if risk_score >= 0.72:
+        if temp_c <= -6:
+            return "salt"
+        if risk_score >= 0.78:
             return "salt"
         return "brine"
 
-    def _treatment_mass_kg(self, seg: Segment, risk_score: float, treatment: str) -> float:
-        base_rate = TREATMENT_BASE_RATE_KG_PER_M[treatment]
-        risk_multiplier = 0.75 + (risk_score * 0.9)
-        slope_multiplier = 1.0 + min(seg.slope_pct, 6) * 0.025
-        drainage_multiplier = {"poor": 1.18, "fair": 1.08, "good": 0.95}.get(seg.drainage_quality, 1.0)
-        surface_multiplier = {"bridge": 1.12, "brick": 1.06, "concrete": 1.0, "asphalt": 0.98}.get(seg.surface_type, 1.0)
-        corridor_multiplier = 1.03 if seg.main_corridor else 1.0
-        return seg.distance_m * base_rate * risk_multiplier * slope_multiplier * drainage_multiplier * surface_multiplier * corridor_multiplier
+    def _base_application_rate(self, treatment: str, risk_score: float) -> tuple[float, str]:
+        if treatment == "salt":
+            return 20 + (20 * max(0.0, min(1.0, risk_score))), "g/m2"
+        if treatment == "brine":
+            return 10 + (20 * max(0.0, min(1.0, risk_score))), "mL/m2"
+
+        return 110 + (70 * max(0.0, min(1.0, risk_score))), "g/m2"
+
+    def _temperature_factor(self, temp_c: float, treatment: str) -> float:
+        if treatment == "sand":
+            if temp_c <= -18:
+                return 1.05
+            if temp_c <= -12:
+                return 1.0
+            return 0.9
+
+        if treatment == "salt":
+            if temp_c <= -12:
+                return 1.18
+            if temp_c <= -8:
+                return 1.1
+            if temp_c <= -2:
+                return 1.0
+            return 0.94
+
+        if temp_c <= -8:
+            return 1.15
+        if temp_c <= -4:
+            return 1.05
+        if temp_c <= 0:
+            return 1.0
+        return 0.92
+
+    def _treatment_requirement(
+        self,
+        seg: Segment,
+        condition: SegmentCondition,
+        treatment: str,
+        temp_c: float,
+    ) -> dict:
+        width_m = SEGMENT_WIDTH_M.get(seg.segment_id, 5.0)
+        area_m2 = seg.distance_m * width_m
+
+        base_rate, rate_unit = self._base_application_rate(treatment, condition.risk_score)
+        temperature_factor = self._temperature_factor(temp_c, treatment)
+        surface_factor = SURFACE_TREATMENT_FACTOR.get(seg.surface_type, 1.0)
+        drainage_factor = DRAINAGE_TREATMENT_FACTOR.get(seg.drainage_quality, 1.0)
+        slope_factor = 1.0 + (min(max(seg.slope_pct, 0.0), 8.0) * 0.03)
+
+        combined_factor = temperature_factor * surface_factor * drainage_factor * slope_factor
+        adjusted_rate = base_rate * combined_factor
+
+        if treatment == "brine":
+            liters = (area_m2 * adjusted_rate) / 1000
+            required_kg = liters * BRINE_DENSITY_KG_PER_L
+        else:
+            required_kg = (area_m2 * adjusted_rate) / 1000
+
+        basis = [
+            f"area={area_m2:.1f}m2 from length {seg.distance_m:.1f}m x width {width_m:.1f}m",
+            f"base rate {base_rate:.1f} {rate_unit}",
+            f"temp factor {temperature_factor:.2f}",
+            f"surface factor {surface_factor:.2f}",
+            f"drainage factor {drainage_factor:.2f}",
+            f"slope factor {slope_factor:.2f}",
+        ]
+
+        return {
+            "area_m2": area_m2,
+            "rate_unit": rate_unit,
+            "base_rate": base_rate,
+            "adjusted_rate": adjusted_rate,
+            "temperature_factor": temperature_factor,
+            "surface_factor": surface_factor,
+            "drainage_factor": drainage_factor,
+            "slope_factor": slope_factor,
+            "combined_factor": combined_factor,
+            "required_kg": required_kg,
+            "engineering_basis": basis,
+        }
+
+    def _blanket_salt_mass_kg(self, seg: Segment) -> float:
+        width_m = SEGMENT_WIDTH_M.get(seg.segment_id, 5.0)
+        area_m2 = seg.distance_m * width_m
+        return (area_m2 * BLANKET_SALT_G_PER_M2) / 1000
 
     def _maintenance_route_nodes(self, ranked: List[Segment]) -> list[str]:
         if not ranked:
