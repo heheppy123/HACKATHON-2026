@@ -85,30 +85,39 @@ function applySharedHorizon() {
 }
 
 function currentOverlayOptions() {
-  return {
-    hazard: document.getElementById("layerHazard").checked,
-    treated: document.getElementById("layerTreated").checked,
-    drainage: document.getElementById("layerDrainage").checked,
-    shading: document.getElementById("layerShading").checked,
-  };
-}
-
-function applySharedOverlays() {
+  const defaults = { hazard: true, treated: true, drainage: true, shading: true };
   const raw = localStorage.getItem(SHARED_OVERLAY_KEY);
-  if (!raw) return;
+  if (!raw) return defaults;
   try {
     const parsed = JSON.parse(raw);
-    if (typeof parsed.hazard === "boolean") document.getElementById("layerHazard").checked = parsed.hazard;
-    if (typeof parsed.treated === "boolean") document.getElementById("layerTreated").checked = parsed.treated;
-    if (typeof parsed.drainage === "boolean") document.getElementById("layerDrainage").checked = parsed.drainage;
-    if (typeof parsed.shading === "boolean") document.getElementById("layerShading").checked = parsed.shading;
+    return {
+      hazard: typeof parsed.hazard === "boolean" ? parsed.hazard : defaults.hazard,
+      treated: typeof parsed.treated === "boolean" ? parsed.treated : defaults.treated,
+      drainage: typeof parsed.drainage === "boolean" ? parsed.drainage : defaults.drainage,
+      shading: typeof parsed.shading === "boolean" ? parsed.shading : defaults.shading,
+    };
   } catch {
-    // Ignore malformed storage.
+    return defaults;
   }
 }
 
-function persistOverlays() {
-  localStorage.setItem(SHARED_OVERLAY_KEY, JSON.stringify(currentOverlayOptions()));
+function renderOverlayHint() {
+  const overlay = currentOverlayOptions();
+  const text = `Overlay profile from Facilities: hazard ${overlay.hazard ? "on" : "off"}, treated ${overlay.treated ? "on" : "off"}, drainage ${overlay.drainage ? "on" : "off"}, shading ${overlay.shading ? "on" : "off"}.`;
+  const routeText = document.getElementById("routeText");
+  if (routeText.textContent.startsWith("Plan a route")) {
+    routeText.textContent = text;
+  }
+}
+
+function currentOverlayParams() {
+  const overlay = currentOverlayOptions();
+  return {
+    hazard_layer: String(overlay.hazard),
+    treated_layer: String(overlay.treated),
+    drainage_layer: String(overlay.drainage),
+    shading_layer: String(overlay.shading),
+  };
 }
 
 function renderRouteOutput(body) {
@@ -240,7 +249,7 @@ function renderTimeline(segments) {
 }
 
 async function planRoute() {
-  const layers = currentOverlayOptions();
+  const overlayParams = currentOverlayParams();
   const params = new URLSearchParams({
     start: document.getElementById("startSelect").value,
     end: document.getElementById("endSelect").value,
@@ -248,10 +257,7 @@ async function planRoute() {
     avoid_steep: "false",
     prefer_cleared: String(document.getElementById("preferClearedToggle").checked),
     horizon_hours: String(selectedHorizon()),
-    hazard_layer: String(layers.hazard),
-    treated_layer: String(layers.treated),
-    drainage_layer: String(layers.drainage),
-    shading_layer: String(layers.shading),
+    ...overlayParams,
   });
   const response = await fetch(`${API_BASE}/route?${params.toString()}`);
   const body = await response.json();
@@ -317,12 +323,6 @@ function attachActions() {
     if (refreshTimer) clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => refreshAll(), 150);
   };
-  ["layerHazard", "layerTreated", "layerDrainage", "layerShading"].forEach((id) => {
-    document.getElementById(id).onchange = () => {
-      persistOverlays();
-      publishSync("overlay_updated", currentOverlayOptions());
-    };
-  });
   document.getElementById("routeBtn").onclick = () => planRoute();
   document.querySelectorAll("[data-report]").forEach((button) => {
     button.onclick = () => submitReport(button.getAttribute("data-report"));
@@ -337,13 +337,13 @@ function attachActions() {
       refreshAll();
     }
     if (event.key === SHARED_OVERLAY_KEY && event.newValue) {
-      applySharedOverlays();
+      renderOverlayHint();
     }
   });
 
   if (syncChannel) {
     syncChannel.onmessage = () => {
-      applySharedOverlays();
+      renderOverlayHint();
       refreshAll();
     };
   }
@@ -351,7 +351,7 @@ function attachActions() {
 
 async function boot() {
   applySharedHorizon();
-  applySharedOverlays();
+  renderOverlayHint();
   attachActions();
   renderLoopSteps();
   try {
