@@ -350,32 +350,41 @@ class FrostFlowEngine:
         ranked_payload = []
         optimized_mass_kg = 0.0
         blanket_mass_kg = 0.0
-        optimized_chloride_kg = 0.0
-        blanket_chloride_kg = 0.0
         total_saved_kg = 0.0
+        runoff_reduction_kg = 0.0
+        chloride_avoided_kg = 0.0
+        chloride_blanket_kg = 0.0
         optimized_cost = 0.0
         blanket_cost = 0.0
         oversalt_penalty_kg = 0.0
+        treated_segments_count = 0
+        high_risk_total = 0
+        high_risk_treated = 0
 
         for seg in ranked:
             condition = risk_map[seg.segment_id]
             flags = self._overlay_flags(seg)
             overlay_modifier = self._overlay_modifier(seg, condition, overlay, weather.temp_c)
             final_risk = self._clamp(condition.risk_score + overlay_modifier)
+            if final_risk > 0.65:
+                high_risk_total += 1
 
             needs_treatment = final_risk > 0.65 or (
                 final_risk > 0.45 and overlay["hazard"] and flags["hazard"]
             )
-
-            if overlay["treated"] and seg.treated:
-                needs_treatment = False
 
             if overlay["drainage"] and flags["drainage"] and -4 <= weather.temp_c <= 1 and final_risk >= 0.45:
                 treatment = "brine"
             else:
                 treatment = self._recommended_treatment(final_risk, weather.temp_c)
 
-            treatment_calc = self._treatment_requirement(seg, condition, treatment, weather.temp_c)
+            treatment_calc = self._treatment_requirement(
+                seg,
+                condition,
+                treatment,
+                weather.temp_c,
+                risk_score=final_risk,
+            )
 
             dose_multiplier = 1.0
             if overlay["hazard"] and flags["hazard"]:
@@ -385,25 +394,46 @@ class FrostFlowEngine:
             if overlay["shading"] and flags["shading"]:
                 dose_multiplier += 0.10
 
-            required_kg = treatment_calc["required_kg"] * dose_multiplier
+            planned_required_kg = treatment_calc["required_kg"] * dose_multiplier
             treatment_calc["engineering_basis"].append(
                 f"overlay dose multiplier {dose_multiplier:.2f} from active layers"
             )
 
             if not needs_treatment:
-                required_kg = 0.0
-                treatment = "none"
-                treatment_calc["adjusted_rate"] = 0.0
-                treatment_calc["rate_unit"] = "g/m2"
-                treatment_calc["engineering_basis"].append("no treatment required under selected overlays")
+                planned_required_kg = 0.0
 
-            required_kg = round(required_kg, 1)
+            recommended_treatment = treatment if needs_treatment else "none"
+            required_kg = round(planned_required_kg, 1)
             blanket_kg = round(self._blanket_salt_mass_kg(seg), 1)
             saved_kg = round(max(0.0, blanket_kg - required_kg), 1)
 
-            if treatment == "salt" and treatment_calc["adjusted_rate"] > BLANKET_SALT_G_PER_M2:
-                excess_g_m2 = treatment_calc["adjusted_rate"] - BLANKET_SALT_G_PER_M2
-                oversalt_penalty_kg += (treatment_calc["area_m2"] * excess_g_m2) / 1000
+            applied_kg = 0.0
+            applied_treatment = "none"
+            if overlay["treated"] and seg.treated:
+                treated_segments_count += 1
+                high_risk_treated += 1 if final_risk > 0.65 else 0
+                applied_treatment = treatment
+                applied_kg = round(treatment_calc["required_kg"] * dose_multiplier, 1)
+
+                blanket_mass_kg += blanket_kg
+                optimized_mass_kg += applied_kg
+                blanket_cost += blanket_kg * TREATMENT_UNIT_COST["salt"]
+                optimized_cost += applied_kg * TREATMENT_UNIT_COST.get(applied_treatment, 0.0)
+
+                runoff_fraction = self._segment_runoff_fraction(flags)
+                blanket_runoff_mass = runoff_fraction * blanket_kg
+                optimized_runoff_mass = runoff_fraction * applied_kg
+                blanket_chloride = blanket_runoff_mass * 0.606
+                optimized_chloride = optimized_runoff_mass * CHLORIDE_FACTOR.get(applied_treatment, 0.0)
+                chloride_reduction = max(0.0, blanket_chloride - optimized_chloride)
+
+                runoff_reduction_kg += chloride_reduction
+                chloride_avoided_kg += chloride_reduction
+                chloride_blanket_kg += blanket_chloride
+
+                if applied_treatment == "salt" and treatment_calc["adjusted_rate"] > BLANKET_SALT_G_PER_M2:
+                    excess_g_m2 = treatment_calc["adjusted_rate"] - BLANKET_SALT_G_PER_M2
+                    oversalt_penalty_kg += (treatment_calc["area_m2"] * excess_g_m2) / 1000
 
             priority = round(self._priority_index(seg, condition, storm_mode=storm_mode, risk_score=final_risk), 3)
             peak_hour = condition.risk_peak_hour
@@ -444,13 +474,15 @@ class FrostFlowEngine:
                     "risk_peak_hour": peak_hour,
                     "recommended_pretreat_hour": pretreat_hour,
                     "eta_to_ice_minutes": eta_minutes,
-                    "recommended_treatment": treatment,
+                    "recommended_treatment": recommended_treatment,
                     "treated_area_m2": round(treatment_calc["area_m2"], 1),
                     "treatment_rate_value": round(treatment_calc["adjusted_rate"], 1),
                     "treatment_rate_unit": treatment_calc["rate_unit"],
                     "treatment_required_kg": required_kg,
                     "blanket_treatment_kg": blanket_kg,
                     "kg_saved_vs_blanket": saved_kg,
+                    "applied_treatment": applied_treatment,
+                    "applied_treatment_kg": round(applied_kg, 1),
                     "temperature_factor": round(treatment_calc["temperature_factor"], 3),
                     "surface_factor": round(treatment_calc["surface_factor"], 3),
                     "drainage_factor": round(treatment_calc["drainage_factor"], 3),
@@ -461,29 +493,22 @@ class FrostFlowEngine:
                 }
             )
 
-            optimized_mass_kg += required_kg
-            blanket_mass_kg += blanket_kg
-            if treatment in CHLORIDE_FACTOR:
-                optimized_chloride_kg += required_kg * CHLORIDE_FACTOR[treatment]
-            blanket_chloride_kg += blanket_kg * CHLORIDE_FACTOR["salt"]
-            total_saved_kg += saved_kg
-            optimized_cost += item_cost
-            blanket_cost += blanket_kg * TREATMENT_UNIT_COST["salt"]
-
-        chloride_reduction_kg = max(0.0, blanket_chloride_kg - optimized_chloride_kg)
-        chloride_reduction_pct = (chloride_reduction_kg / blanket_chloride_kg) * 100 if blanket_chloride_kg else 0.0
-        runoff_reduction_kg = chloride_reduction_kg * RUNOFF_RATIO
+        total_saved_kg = max(0.0, blanket_mass_kg - optimized_mass_kg)
         optimized_ratio_pct = (optimized_mass_kg / blanket_mass_kg) * 100 if blanket_mass_kg else 0.0
         saved_ratio_pct = (total_saved_kg / blanket_mass_kg) * 100 if blanket_mass_kg else 0.0
-
+        chloride_reduction_pct = (chloride_avoided_kg / chloride_blanket_kg) * 100 if chloride_blanket_kg else 0.0
         oversalt_penalty_pct = (oversalt_penalty_kg / blanket_mass_kg) * 100 if blanket_mass_kg else 0.0
-        sustainability_index = min(
-            100.0,
-            max(
-                0.0,
-                40 + (saved_ratio_pct * 0.35) + (chloride_reduction_pct * 0.45) - (oversalt_penalty_pct * 0.5),
-            ),
-        )
+
+        if treated_segments_count == 0:
+            runoff_reduction_kg = 0.0
+            chloride_avoided_kg = 0.0
+            chloride_reduction_pct = 0.0
+            sustainability_index = 0.0
+        else:
+            s1 = saved_ratio_pct
+            s2 = chloride_reduction_pct
+            s3 = (high_risk_treated / high_risk_total) * 100 if high_risk_total else 100.0
+            sustainability_index = max(0.0, min(100.0, (0.4 * s1) + (0.4 * s2) + (0.2 * s3) - (0.2 * oversalt_penalty_pct)))
 
         emergency_segments = [s.segment_id for s in segments if s.emergency_route]
         accessible_segments = [s.segment_id for s in segments if s.accessible_route]
@@ -506,7 +531,7 @@ class FrostFlowEngine:
                 "treatment_mass_saved_kg": round(total_saved_kg, 1),
                 "chloride_reduction_pct": round(chloride_reduction_pct, 1),
                 "chloride_runoff_reduction_kg": round(runoff_reduction_kg, 1),
-                "pollution_avoided_kg": round(chloride_reduction_kg, 1),
+                "pollution_avoided_kg": round(chloride_avoided_kg, 1),
                 "sustainability_index": round(sustainability_index, 1),
                 "optimized_to_blanket_ratio_pct": round(optimized_ratio_pct, 1),
                 "saved_mass_ratio_pct": round(saved_ratio_pct, 1),
@@ -516,6 +541,7 @@ class FrostFlowEngine:
                 "blanket_material_cost": round(blanket_cost, 2),
                 "material_cost_saved": round(max(0.0, blanket_cost - optimized_cost), 2),
                 "oversalting_penalty_kg": round(oversalt_penalty_kg, 2),
+                "treated_segments_count": treated_segments_count,
             },
         }
 
@@ -786,7 +812,7 @@ class FrostFlowEngine:
         if treatment == "brine":
             return 10 + (20 * max(0.0, min(1.0, risk_score))), "mL/m2"
 
-        return 110 + (70 * max(0.0, min(1.0, risk_score))), "g/m2"
+        return 20 + (15 * max(0.0, min(1.0, risk_score))), "g/m2"
 
     def _temperature_factor(self, temp_c: float, treatment: str) -> float:
         if treatment == "sand":
@@ -819,11 +845,13 @@ class FrostFlowEngine:
         condition: SegmentCondition,
         treatment: str,
         temp_c: float,
+        risk_score: float | None = None,
     ) -> dict:
         width_m = SEGMENT_WIDTH_M.get(seg.segment_id, 5.0)
         area_m2 = seg.distance_m * width_m
 
-        base_rate, rate_unit = self._base_application_rate(treatment, condition.risk_score)
+        effective_risk = condition.risk_score if risk_score is None else risk_score
+        base_rate, rate_unit = self._base_application_rate(treatment, effective_risk)
         temperature_factor = self._temperature_factor(temp_c, treatment)
         surface_factor = SURFACE_TREATMENT_FACTOR.get(seg.surface_type, 1.0)
         drainage_factor = DRAINAGE_TREATMENT_FACTOR.get(seg.drainage_quality, 1.0)
@@ -915,6 +943,14 @@ class FrostFlowEngine:
                 modifier += abs(condition.treatment_adjustment)
 
         return max(-0.45, min(0.45, modifier))
+
+    def _segment_runoff_fraction(self, flags: dict) -> float:
+        runoff = 0.45
+        if flags.get("drainage"):
+            runoff += 0.15
+        if flags.get("shading"):
+            runoff += 0.05
+        return max(0.2, min(0.85, runoff))
 
     def _clamp(self, value: float, lo: float = 0.0, hi: float = 1.0) -> float:
         return max(lo, min(hi, value))
