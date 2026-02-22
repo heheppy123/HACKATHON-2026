@@ -7,12 +7,16 @@ const COLOR_BY_STATUS = {
   teal: "#2fb8af",
   green: "#2fbf7e",
 };
+const SHARED_HORIZON_KEY = "frostflow:shared-horizon";
+const SHARED_SYNC_KEY = "frostflow:sync-event";
+const syncChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("frostflow-sync") : null;
 
 let selectedSegmentId = null;
 let currentSegments = [];
 let currentMaintenance = null;
 let refreshToken = 0;
 let refreshTimer = null;
+let pollingHandle = null;
 
 function selectedHorizon() {
   return Number(document.getElementById("timeline").value);
@@ -22,9 +26,6 @@ function layerState() {
   return {
     hazard: document.getElementById("layerHazard").checked,
     treated: document.getElementById("layerTreated").checked,
-    emergency: document.getElementById("layerEmergency").checked,
-    accessible: document.getElementById("layerAccessible").checked,
-    corridor: document.getElementById("layerCorridor").checked,
     drainage: document.getElementById("layerDrainage").checked,
     shading: document.getElementById("layerShading").checked,
   };
@@ -43,8 +44,18 @@ function riskColor(segment) {
   return COLOR_BY_STATUS.green;
 }
 
-function segmentName(segmentId) {
-  return currentSegments.find((seg) => seg.segment_id === segmentId)?.name || segmentId;
+function publishSync(type, payload = {}) {
+  const event = { type, payload, ts: Date.now() };
+  localStorage.setItem(SHARED_SYNC_KEY, JSON.stringify(event));
+  if (syncChannel) syncChannel.postMessage(event);
+}
+
+function applySharedHorizon() {
+  const shared = Number(localStorage.getItem(SHARED_HORIZON_KEY));
+  if (!Number.isNaN(shared) && shared >= 0 && shared <= 24) {
+    document.getElementById("timeline").value = String(shared);
+    document.getElementById("timelineLabel").textContent = String(shared);
+  }
 }
 
 async function fetchRiskMap() {
@@ -84,33 +95,27 @@ function renderSegmentDetails(segment) {
 }
 
 function applyLayerStyles(segment, line, layers) {
-  line.classList.remove("selected", "layer-emergency", "layer-accessible", "layer-corridor", "layer-drainage", "layer-shading", "layer-treated");
+  line.classList.remove("selected", "layer-drainage", "layer-shading", "layer-treated");
 
   const isHazard = segment.status === "confirmed_hazard" || segment.status === "caution";
-  let color = "#7ea8d2";
-  let width = 8;
+  const isTreated = segment.status === "treated_monitor" || segment.status === "treated_stable";
+  let color = riskColor(segment);
+  let width = 9;
   let opacity = 0.45;
 
   if (layers.hazard && isHazard) {
     color = riskColor(segment);
     width = 12;
     opacity = 0.96;
-  } else if (layers.treated && segment.treated) {
-    color = "#4fb6ff";
+  } else if (layers.treated && isTreated) {
+    color = riskColor(segment);
     width = 11;
     opacity = 0.95;
     line.classList.add("layer-treated");
-  } else if (!layers.hazard && !layers.treated) {
-    color = riskColor(segment);
-    opacity = 0.78;
   } else {
-    color = riskColor(segment);
-    opacity = 0.72;
+    opacity = 0.76;
   }
 
-  if (layers.emergency && segment.emergency_route) line.classList.add("layer-emergency");
-  if (layers.accessible && segment.accessible_route) line.classList.add("layer-accessible");
-  if (layers.corridor && segment.main_corridor) line.classList.add("layer-corridor");
   if (layers.drainage && segment.drainage_quality === "poor") line.classList.add("layer-drainage");
   if (layers.shading && Number(segment.shading_exposure) >= 0.65) line.classList.add("layer-shading");
 
@@ -145,23 +150,6 @@ function renderRiskSegments(segments) {
   }
 }
 
-function renderCriticalRoutes(criticalRoutes) {
-  const listDefs = [
-    { id: "emergencyRouteList", items: criticalRoutes?.emergency || [] },
-    { id: "accessibleRouteList", items: criticalRoutes?.accessible || [] },
-    { id: "corridorRouteList", items: criticalRoutes?.main_corridors || [] },
-  ];
-  listDefs.forEach(({ id, items }) => {
-    const list = document.getElementById(id);
-    list.innerHTML = "";
-    items.forEach((segmentId) => {
-      const li = document.createElement("li");
-      li.textContent = segmentName(segmentId);
-      list.appendChild(li);
-    });
-  });
-}
-
 function renderMaintenance(maintenance) {
   currentMaintenance = maintenance;
   const list = document.getElementById("hazardList");
@@ -176,13 +164,19 @@ function renderMaintenance(maintenance) {
         <span class="badge ${item.display_color || "green"}">${readableStatus(item.status)}</span>
       </div>
       <p class="small">Priority ${item.priority_index} | risk ${item.risk_score} | confidence ${Math.round(item.confidence * 100)}%</p>
-      <p class="small">Treatment ${String(item.recommended_treatment || "").toUpperCase()} | required ${item.treatment_required_kg} kg | saved ${item.kg_saved_vs_blanket} kg</p>
+      <p class="small">
+        Treatment ${String(item.recommended_treatment || "").toUpperCase()} @ ${item.treatment_rate_value} ${item.treatment_rate_unit}
+        on ${item.treated_area_m2} m2
+      </p>
+      <p class="small">Required ${item.treatment_required_kg} kg | Blanket ${item.blanket_treatment_kg} kg | Saved ${item.kg_saved_vs_blanket} kg</p>
+      <p class="small">Material cost $${item.estimated_material_cost} | ${item.engineering_basis}</p>
       <p class="small">Surface ${item.surface_type}, slope ${item.slope_pct}%, drainage ${item.drainage_quality}, shade ${item.shading_exposure}</p>
     `;
     const button = document.createElement("button");
     button.textContent = item.treated ? "Mark Untreated" : "Mark Treated";
     button.onclick = async () => {
       await markTreated(item.segment_id, !item.treated);
+      publishSync("treatment_updated", { segment_id: item.segment_id, treated: !item.treated });
       await refreshAll();
     };
     li.appendChild(button);
@@ -220,12 +214,12 @@ async function refreshAll() {
 
   document.getElementById("warningBanner").textContent = risk.active_warning;
   renderRiskSegments(risk.segments || []);
-  renderCriticalRoutes(risk.critical_routes || {});
   renderMaintenance(maintenance);
 }
 
 function attachActions() {
   document.getElementById("timeline").oninput = () => {
+    localStorage.setItem(SHARED_HORIZON_KEY, document.getElementById("timeline").value);
     if (refreshTimer) clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => refreshAll(), 160);
   };
@@ -234,20 +228,32 @@ function attachActions() {
   [
     "layerHazard",
     "layerTreated",
-    "layerEmergency",
-    "layerAccessible",
-    "layerCorridor",
     "layerDrainage",
     "layerShading",
   ].forEach((id) => {
     document.getElementById(id).onchange = () => renderRiskSegments(currentSegments);
   });
+
+  window.addEventListener("storage", (event) => {
+    if (event.key === SHARED_HORIZON_KEY && event.newValue) {
+      document.getElementById("timeline").value = event.newValue;
+      refreshAll();
+    }
+    if (event.key === SHARED_SYNC_KEY && event.newValue) {
+      refreshAll();
+    }
+  });
+  if (syncChannel) {
+    syncChannel.onmessage = () => refreshAll();
+  }
 }
 
 async function boot() {
+  applySharedHorizon();
   attachActions();
   try {
     await refreshAll();
+    pollingHandle = setInterval(() => refreshAll(), 15000);
   } catch (error) {
     document.getElementById("warningBanner").textContent = "Failed to connect to API.";
   }
