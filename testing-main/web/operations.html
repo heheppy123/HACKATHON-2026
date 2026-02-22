@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FrostFlow Operations Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="ambient-layer" aria-hidden="true"></div>
+
+    <header class="topbar card">
+      <div>
+        <p class="eyebrow">FrostFlow Dashboards</p>
+        <h1>Facilities Operations</h1>
+        <p>Treatment planning, layer analysis, route priorities, and sustainability impact.</p>
+      </div>
+      <nav class="view-switch">
+        <a class="view-link" href="/web/">Home</a>
+        <a class="view-link" href="/web/commuter.html">Commuter</a>
+        <a class="view-link active" href="/web/operations.html">Operations</a>
+      </nav>
+    </header>
+
+    <section class="card banner-card">
+      <p class="eyebrow">Active Advisory</p>
+      <div id="warningBanner" class="alert">Loading advisory...</div>
+    </section>
+
+    <main class="page-grid operations-grid">
+      <aside class="card panel">
+        <h2>Operations Controls</h2>
+        <label>Forecast horizon: +<span id="timelineLabel">6</span>h</label>
+        <input id="timeline" type="range" min="0" max="24" step="6" value="6" />
+
+        <label class="toggle-row"><input type="checkbox" id="stormModeToggle" /> Storm response mode</label>
+        <p class="small" id="stormInfo">Storm mode off. Standard optimization applied.</p>
+
+        <h3>GIS Layers</h3>
+        <label class="toggle-row"><input type="checkbox" id="layerHazard" checked /> Hazard zones</label>
+        <label class="toggle-row"><input type="checkbox" id="layerTreated" checked /> Treated routes</label>
+        <label class="toggle-row"><input type="checkbox" id="layerEmergency" checked /> Emergency routes</label>
+        <label class="toggle-row"><input type="checkbox" id="layerAccessible" checked /> Accessible routes</label>
+        <label class="toggle-row"><input type="checkbox" id="layerCorridor" checked /> Main corridors</label>
+        <label class="toggle-row"><input type="checkbox" id="layerDrainage" checked /> Drainage problem areas</label>
+        <label class="toggle-row"><input type="checkbox" id="layerShading" checked /> High shading zones</label>
+
+        <h3>Critical Routes</h3>
+        <div class="critical-grid">
+          <div>
+            <span class="eyebrow">Emergency</span>
+            <ul id="emergencyRouteList"></ul>
+          </div>
+          <div>
+            <span class="eyebrow">Accessible</span>
+            <ul id="accessibleRouteList"></ul>
+          </div>
+          <div>
+            <span class="eyebrow">Corridors</span>
+            <ul id="corridorRouteList"></ul>
+          </div>
+        </div>
+      </aside>
+
+      <section class="card map-card">
+        <div class="map-header">
+          <h2>Infrastructure Layer Map</h2>
+          <div class="legend">
+            <span><i class="dot red"></i>Hazard</span>
+            <span><i class="dot yellow"></i>Caution</span>
+            <span><i class="dot blue"></i>Treated route</span>
+            <span><i class="line-key emergency"></i>Emergency</span>
+            <span><i class="line-key accessible"></i>Accessible</span>
+            <span><i class="line-key corridor"></i>Corridor</span>
+          </div>
+        </div>
+
+        <svg viewBox="0 0 700 420" class="campus-map" aria-label="Operations risk map">
+          <line id="S1" x1="120" y1="260" x2="250" y2="220" class="segment" />
+          <line id="S2" x1="250" y1="220" x2="390" y2="210" class="segment" />
+          <line id="S3" x1="390" y1="210" x2="500" y2="250" class="segment" />
+          <line id="S4" x1="120" y1="260" x2="500" y2="250" class="segment" />
+          <line id="S5" x1="500" y1="250" x2="620" y2="190" class="segment" />
+          <line id="S6" x1="390" y1="210" x2="620" y2="190" class="segment" />
+          <circle cx="120" cy="260" r="10" class="node" /><text x="100" y="290">SUB</text>
+          <circle cx="250" cy="220" r="10" class="node" /><text x="226" y="250">Quad</text>
+          <circle cx="390" cy="210" r="10" class="node" /><text x="374" y="240">CAB</text>
+          <circle cx="500" cy="250" r="10" class="node" /><text x="470" y="281">Library</text>
+          <circle cx="620" cy="190" r="10" class="node" /><text x="607" y="220">HUB</text>
+        </svg>
+
+        <p id="segmentDetails" class="small">Select a segment to inspect operations details.</p>
+      </section>
+
+      <aside class="card panel">
+        <h2>Treatment Priorities</h2>
+        <ol id="hazardList"></ol>
+        <p id="maintenanceLoop" class="small"></p>
+
+        <h3>Environmental + Cost Impact</h3>
+        <div class="stats">
+          <div><span>Optimized mass</span><strong id="optimizedMass"></strong></div>
+          <div><span>Blanket mass</span><strong id="blanketMass"></strong></div>
+          <div><span>Material saved</span><strong id="materialSaved"></strong></div>
+          <div><span>Runoff reduction</span><strong id="runoffReduction"></strong></div>
+          <div><span>Pollution avoided</span><strong id="pollutionAvoided"></strong></div>
+          <div><span>Sustainability</span><strong id="sustainabilityIndex"></strong></div>
+        </div>
+      </aside>
+    </main>
+
+    <script src="operations.js" defer></script>
+  </body>
+</html>
