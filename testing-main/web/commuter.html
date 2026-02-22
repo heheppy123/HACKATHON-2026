@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FrostFlow Commuter Dashboard</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="ambient-layer" aria-hidden="true"></div>
+
+    <header class="topbar card">
+      <div>
+        <p class="eyebrow">FrostFlow Dashboards</p>
+        <h1>Commuter + Reporting</h1>
+        <p>Route planning and field feedback for daily campus movement.</p>
+      </div>
+      <nav class="view-switch">
+        <a class="view-link" href="/web/">Home</a>
+        <a class="view-link active" href="/web/commuter.html">Commuter</a>
+        <a class="view-link" href="/web/operations.html">Operations</a>
+      </nav>
+    </header>
+
+    <section class="card banner-card">
+      <p class="eyebrow">Active Advisory</p>
+      <div id="warningBanner" class="alert">Loading advisory...</div>
+    </section>
+
+    <section class="card loop-card compact">
+      <h2>Closed-Loop Progress</h2>
+      <div class="loop-steps">
+        <div id="loop-prediction" class="loop-step">Prediction</div>
+        <div id="loop-routing" class="loop-step">Routing</div>
+        <div id="loop-reporting" class="loop-step">Reporting</div>
+        <div id="loop-treatment" class="loop-step">Treatment</div>
+        <div id="loop-recalculation" class="loop-step">Recalculation</div>
+      </div>
+    </section>
+
+    <main class="page-grid commuter-grid">
+      <aside class="card panel">
+        <h2>Route Controls</h2>
+        <label>Start node</label>
+        <select id="startSelect"></select>
+
+        <label>Destination node</label>
+        <select id="endSelect"></select>
+
+        <div class="row">
+          <button id="safestBtn" class="active">Safest Route</button>
+          <button id="shortestBtn">Shortest Route</button>
+        </div>
+
+        <label class="toggle-row"><input type="checkbox" id="avoidSteepToggle" /> Avoid steep segments</label>
+        <label class="toggle-row"><input type="checkbox" id="preferClearedToggle" checked /> Prefer treated segments</label>
+
+        <label>Forecast horizon: +<span id="timelineLabel">0</span>h</label>
+        <input id="timeline" type="range" min="0" max="24" step="6" value="0" />
+
+        <button id="routeBtn" class="primary">Plan Route</button>
+        <p id="routeText" class="small">Plan a route to view analysis.</p>
+
+        <h3>Field Report</h3>
+        <p class="small">Select a segment on map and submit what you observe.</p>
+        <div class="report-grid">
+          <button data-report="Icy">Icy</button>
+          <button data-report="Slushy">Slushy</button>
+          <button data-report="Clear">Clear</button>
+          <button data-report="Salted">Salted</button>
+        </div>
+        <p id="reportStatus" class="status"></p>
+      </aside>
+
+      <section class="card map-card">
+        <div class="map-header">
+          <h2>Risk Map</h2>
+          <div class="legend">
+            <span><i class="dot red"></i>Confirmed hazard</span>
+            <span><i class="dot yellow"></i>Caution</span>
+            <span><i class="dot blue"></i>Treated</span>
+            <span><i class="dot green"></i>Clear</span>
+          </div>
+        </div>
+
+        <svg viewBox="0 0 700 420" class="campus-map" aria-label="Campus risk map">
+          <defs>
+            <linearGradient id="routeGradCommuter" x1="0" x2="1">
+              <stop offset="0%" stop-color="#57b8ff" />
+              <stop offset="100%" stop-color="#1967d2" />
+            </linearGradient>
+          </defs>
+          <line id="S1" x1="120" y1="260" x2="250" y2="220" class="segment" />
+          <line id="S2" x1="250" y1="220" x2="390" y2="210" class="segment" />
+          <line id="S3" x1="390" y1="210" x2="500" y2="250" class="segment" />
+          <line id="S4" x1="120" y1="260" x2="500" y2="250" class="segment" />
+          <line id="S5" x1="500" y1="250" x2="620" y2="190" class="segment" />
+          <line id="S6" x1="390" y1="210" x2="620" y2="190" class="segment" />
+          <circle cx="120" cy="260" r="10" class="node" /><text x="100" y="290">SUB</text>
+          <circle cx="250" cy="220" r="10" class="node" /><text x="226" y="250">Quad</text>
+          <circle cx="390" cy="210" r="10" class="node" /><text x="374" y="240">CAB</text>
+          <circle cx="500" cy="250" r="10" class="node" /><text x="470" y="281">Library</text>
+          <circle cx="620" cy="190" r="10" class="node" /><text x="607" y="220">HUB</text>
+        </svg>
+
+        <p id="segmentDetails" class="small">Click a segment to inspect current engineering risk factors.</p>
+      </section>
+
+      <section class="card timeline-card">
+        <h2>Risk Forecast Timeline</h2>
+        <table class="timeline-table">
+          <thead>
+            <tr>
+              <th>Segment</th>
+              <th>Status</th>
+              <th>Peak Risk</th>
+              <th>Pre-treat</th>
+            </tr>
+          </thead>
+          <tbody id="timelineBody"></tbody>
+        </table>
+      </section>
+    </main>
+
+    <script src="commuter.js" defer></script>
+  </body>
+</html>
