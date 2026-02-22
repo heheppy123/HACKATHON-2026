@@ -51,9 +51,15 @@ function persistOverlays() {
 }
 
 function readableStatus(status) {
-  return String(status || "clear")
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  const key = String(status || "clear");
+  const friendly = {
+    confirmed_hazard: "Confirmed Hazard",
+    caution: "Caution",
+    treated_monitor: "Preferred Route",
+    treated_stable: "Treated Stable",
+    clear: "Clear",
+  };
+  return friendly[key] || key.replaceAll("_", " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 function riskColor(segment) {
