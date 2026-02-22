@@ -109,17 +109,8 @@ async function markTreated(segmentId, treated) {
 }
 
 function renderSegmentDetails(segment) {
-  const flags = [];
-  if (segment.emergency_route) flags.push("emergency");
-  if (segment.accessible_route) flags.push("accessible");
-  if (segment.main_corridor) flags.push("corridor");
-  if (segment.drainage_quality === "poor") flags.push("drainage watch");
-  if (segment.shading_exposure >= 0.65) flags.push("high shading");
   document.getElementById("segmentDetails").textContent =
-    `${segment.name} | ${readableStatus(segment.status)} | risk ${segment.risk_score} | `
-    + `surface ${segment.surface_type}, slope ${segment.slope_pct}% | `
-    + `drainage ${segment.drainage_quality}, shade ${segment.shading_exposure} | `
-    + `flags: ${flags.join(", ") || "none"} | ${segment.reason}`;
+    `${segment.name} | ${readableStatus(segment.status)} | risk ${segment.risk_score} | surface ${segment.surface_type}`;
 }
 
 function applyLayerStyles(segment, line, layers) {
@@ -217,6 +208,7 @@ function renderMaintenance(maintenance) {
 
   const env = maintenance.environmental_metrics || {};
   const sustainability = env.sustainability_score ?? env.sustainability_index ?? 0;
+  const treatedCount = env.treated_segments_count ?? 0;
 
   document.getElementById("optimizedMass").textContent = `${env.optimized_treatment_mass_kg ?? 0} kg`;
   document.getElementById("blanketMass").textContent = `${env.blanket_treatment_mass_kg ?? 0} kg`;
@@ -224,6 +216,10 @@ function renderMaintenance(maintenance) {
   document.getElementById("runoffReduction").textContent = `${env.chloride_runoff_reduction_kg ?? 0} kg`;
   document.getElementById("pollutionAvoided").textContent = `${env.pollution_avoided_kg ?? 0} kg`;
   document.getElementById("sustainabilityIndex").textContent = `${sustainability}/100`;
+
+  if (!treatedCount) {
+    document.getElementById("maintenanceLoop").textContent += " | No treated segments yet; impact metrics remain 0.";
+  }
 }
 
 function applyStormModeLabel() {
