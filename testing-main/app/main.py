@@ -46,6 +46,9 @@ def risk_map(horizon_hours: int = Query(default=0, ge=0, le=24)) -> dict:
     segments = []
     for seg in engine.load_segments():
         cond = risk[seg.segment_id]
+        hazard_zone = seg.segment_id in {"S2", "S3", "S5"} or seg.surface_type == "bridge" or seg.slope_pct >= 3.5
+        drainage_zone = seg.drainage_quality == "poor"
+        shading_zone = seg.shading_exposure >= 0.65
         segments.append(
             {
                 "segment_id": seg.segment_id,
@@ -62,6 +65,9 @@ def risk_map(horizon_hours: int = Query(default=0, ge=0, le=24)) -> dict:
                 "accessible_route": seg.accessible_route,
                 "main_corridor": seg.main_corridor,
                 "wind_corridor": seg.wind_corridor,
+                "hazard_zone": hazard_zone,
+                "drainage_zone": drainage_zone,
+                "shading_zone": shading_zone,
                 "risk_score": cond.risk_score,
                 "weather_risk": cond.weather_risk,
                 "structural_risk": cond.structural_risk,
@@ -110,9 +116,27 @@ def route(
     avoid_steep: bool = False,
     prefer_cleared: bool = False,
     horizon_hours: int = 0,
+    hazard_layer: bool = True,
+    treated_layer: bool = True,
+    drainage_layer: bool = True,
+    shading_layer: bool = True,
 ) -> dict:
     try:
-        out = engine.compute_route(start, end, safest, avoid_steep, prefer_cleared, horizon_hours)
+        overlay_options = {
+            "hazard": hazard_layer,
+            "treated": treated_layer,
+            "drainage": drainage_layer,
+            "shading": shading_layer,
+        }
+        out = engine.compute_route(
+            start,
+            end,
+            safest,
+            avoid_steep,
+            prefer_cleared,
+            horizon_hours,
+            overlay_options=overlay_options,
+        )
         return out.__dict__
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -140,8 +164,18 @@ def report(payload: ReportIn) -> dict:
 def maintenance_plan(
     horizon_hours: int = Query(default=6, ge=0, le=24),
     storm_mode: bool = Query(default=False),
+    hazard_layer: bool = Query(default=True),
+    treated_layer: bool = Query(default=True),
+    drainage_layer: bool = Query(default=True),
+    shading_layer: bool = Query(default=True),
 ) -> dict:
-    return engine.maintenance_plan(horizon_hours, storm_mode=storm_mode)
+    overlay_options = {
+        "hazard": hazard_layer,
+        "treated": treated_layer,
+        "drainage": drainage_layer,
+        "shading": shading_layer,
+    }
+    return engine.maintenance_plan(horizon_hours, storm_mode=storm_mode, overlay_options=overlay_options)
 
 
 @app.get("/timeline-preview")
@@ -174,6 +208,15 @@ def mark_treated(payload: TreatIn) -> dict:
         "UPDATE WalkwaySegments SET treatment_status = ? WHERE id = ?",
         (1 if payload.treated else 0, payload.segment_id),
     )
+    if payload.treated:
+        execute(
+            "DELETE FROM Reports WHERE segment_id = ? AND report_type IN ('Icy', 'Slushy')",
+            (payload.segment_id,),
+        )
+        execute(
+            "INSERT INTO Reports(segment_id, report_type, timestamp) VALUES (?,?,?)",
+            (payload.segment_id, "Salted", datetime.now(timezone.utc).isoformat()),
+        )
     return {"ok": True, "segment_id": payload.segment_id, "treated": payload.treated}
 
 
