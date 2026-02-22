@@ -82,6 +82,7 @@ class FrostFlowEngine:
                 emergency_route=bool(r["emergency_route"]),
                 accessible_route=bool(r["accessible_route"]),
                 main_corridor=bool(r["main_corridor"]),
+                wind_corridor=bool(r["wind_corridor"]) if "wind_corridor" in r.keys() else False,
             )
             for r in rows
         ]
@@ -413,6 +414,16 @@ class FrostFlowEngine:
         peak_hour = int((timeline_meta or {}).get("peak_hour", 0))
         peak_score = float((timeline_meta or {}).get("peak_risk", risk))
         pretreat_hour = int((timeline_meta or {}).get("recommended_pretreat_hour", 0))
+        refreeze_likelihood = 0.18
+        if previous_weather.temp_c > 0 and weather.temp_c < 0:
+            refreeze_likelihood += 0.42
+        if seg.shading_exposure >= 0.6:
+            refreeze_likelihood += 0.12
+        if seg.drainage_quality == "poor":
+            refreeze_likelihood += 0.1
+        if seg.wind_corridor:
+            refreeze_likelihood += 0.08
+        refreeze_likelihood = max(0.0, min(1.0, refreeze_likelihood))
 
         return SegmentCondition(
             segment_id=seg.segment_id,
@@ -430,6 +441,7 @@ class FrostFlowEngine:
             risk_peak_hour=peak_hour,
             risk_peak_score=round(peak_score, 3),
             recommended_pretreat_hour=pretreat_hour,
+            refreeze_likelihood=round(refreeze_likelihood, 3),
         )
 
     def _weather_component(self, weather: WeatherSnapshot, prev: WeatherSnapshot) -> tuple[float, list[str]]:
