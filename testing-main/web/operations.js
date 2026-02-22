@@ -9,6 +9,7 @@ const COLOR_BY_STATUS = {
 };
 const SHARED_HORIZON_KEY = "frostflow:shared-horizon";
 const SHARED_SYNC_KEY = "frostflow:sync-event";
+const SHARED_OVERLAY_KEY = "frostflow:overlay-options";
 const syncChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("frostflow-sync") : null;
 
 let selectedSegmentId = null;
@@ -29,6 +30,24 @@ function layerState() {
     drainage: document.getElementById("layerDrainage").checked,
     shading: document.getElementById("layerShading").checked,
   };
+}
+
+function applySharedOverlays() {
+  const raw = localStorage.getItem(SHARED_OVERLAY_KEY);
+  if (!raw) return;
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.hazard === "boolean") document.getElementById("layerHazard").checked = parsed.hazard;
+    if (typeof parsed.treated === "boolean") document.getElementById("layerTreated").checked = parsed.treated;
+    if (typeof parsed.drainage === "boolean") document.getElementById("layerDrainage").checked = parsed.drainage;
+    if (typeof parsed.shading === "boolean") document.getElementById("layerShading").checked = parsed.shading;
+  } catch {
+    // Ignore malformed storage
+  }
+}
+
+function persistOverlays() {
+  localStorage.setItem(SHARED_OVERLAY_KEY, JSON.stringify(layerState()));
 }
 
 function readableStatus(status) {
@@ -66,7 +85,16 @@ async function fetchRiskMap() {
 
 async function fetchMaintenance() {
   const storm = document.getElementById("stormModeToggle").checked;
-  const response = await fetch(`${API_BASE}/maintenance-plan?horizon_hours=${selectedHorizon()}&storm_mode=${storm}`);
+  const layers = layerState();
+  const params = new URLSearchParams({
+    horizon_hours: String(selectedHorizon()),
+    storm_mode: String(storm),
+    hazard_layer: String(layers.hazard),
+    treated_layer: String(layers.treated),
+    drainage_layer: String(layers.drainage),
+    shading_layer: String(layers.shading),
+  });
+  const response = await fetch(`${API_BASE}/maintenance-plan?${params.toString()}`);
   if (!response.ok) throw new Error("Could not fetch /maintenance-plan");
   return response.json();
 }
@@ -97,27 +125,28 @@ function renderSegmentDetails(segment) {
 function applyLayerStyles(segment, line, layers) {
   line.classList.remove("selected", "layer-drainage", "layer-shading", "layer-treated");
 
-  const isHazard = segment.status === "confirmed_hazard" || segment.status === "caution";
+  const statusHazard = segment.status === "confirmed_hazard" || segment.status === "caution";
+  const isHazard = statusHazard || segment.hazard_zone;
   const isTreated = segment.status === "treated_monitor" || segment.status === "treated_stable";
   let color = riskColor(segment);
   let width = 9;
   let opacity = 0.45;
 
-  if (layers.hazard && isHazard) {
-    color = riskColor(segment);
-    width = 12;
-    opacity = 0.96;
-  } else if (layers.treated && isTreated) {
+  if (layers.treated && isTreated) {
     color = riskColor(segment);
     width = 11;
     opacity = 0.95;
     line.classList.add("layer-treated");
+  } else if (layers.hazard && isHazard) {
+    color = statusHazard ? riskColor(segment) : "#f0b04c";
+    width = 12;
+    opacity = 0.96;
   } else {
     opacity = 0.76;
   }
 
-  if (layers.drainage && segment.drainage_quality === "poor") line.classList.add("layer-drainage");
-  if (layers.shading && Number(segment.shading_exposure) >= 0.65) line.classList.add("layer-shading");
+  if (layers.drainage && segment.drainage_zone) line.classList.add("layer-drainage");
+  if (layers.shading && segment.shading_zone) line.classList.add("layer-shading");
 
   line.style.stroke = color;
   line.style.strokeWidth = String(width);
@@ -231,7 +260,11 @@ function attachActions() {
     "layerDrainage",
     "layerShading",
   ].forEach((id) => {
-    document.getElementById(id).onchange = () => renderRiskSegments(currentSegments);
+    document.getElementById(id).onchange = () => {
+      persistOverlays();
+      publishSync("overlay_updated", layerState());
+      refreshAll();
+    };
   });
 
   window.addEventListener("storage", (event) => {
@@ -242,14 +275,22 @@ function attachActions() {
     if (event.key === SHARED_SYNC_KEY && event.newValue) {
       refreshAll();
     }
+    if (event.key === SHARED_OVERLAY_KEY && event.newValue) {
+      applySharedOverlays();
+      refreshAll();
+    }
   });
   if (syncChannel) {
-    syncChannel.onmessage = () => refreshAll();
+    syncChannel.onmessage = () => {
+      applySharedOverlays();
+      refreshAll();
+    };
   }
 }
 
 async function boot() {
   applySharedHorizon();
+  applySharedOverlays();
   attachActions();
   try {
     await refreshAll();
