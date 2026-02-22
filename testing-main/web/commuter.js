@@ -10,6 +10,9 @@ const SEGMENT_ROUTE_LOOKUP = {
 };
 
 const LOOP_SEQUENCE = ["prediction", "routing", "reporting", "treatment", "recalculation"];
+const SHARED_HORIZON_KEY = "frostflow:shared-horizon";
+const SHARED_SYNC_KEY = "frostflow:sync-event";
+const syncChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("frostflow-sync") : null;
 
 const COLOR_BY_STATUS = {
   red: "#e14f56",
@@ -26,6 +29,7 @@ let currentSegments = [];
 let refreshTimer = null;
 let refreshToken = 0;
 const controlProgress = [];
+let pollingHandle = null;
 
 function selectedHorizon() {
   return Number(document.getElementById("timeline").value);
@@ -63,6 +67,43 @@ function riskColor(segment) {
 
 function segmentName(segmentId) {
   return currentSegments.find((seg) => seg.segment_id === segmentId)?.name || segmentId;
+}
+
+function publishSync(type, payload = {}) {
+  const event = { type, payload, ts: Date.now() };
+  localStorage.setItem(SHARED_SYNC_KEY, JSON.stringify(event));
+  if (syncChannel) syncChannel.postMessage(event);
+}
+
+function applySharedHorizon() {
+  const shared = Number(localStorage.getItem(SHARED_HORIZON_KEY));
+  if (!Number.isNaN(shared) && shared >= 0 && shared <= 24) {
+    document.getElementById("timeline").value = String(shared);
+    document.getElementById("timelineLabel").textContent = String(shared);
+  }
+}
+
+function renderRouteOutput(body) {
+  const headline = document.getElementById("routeHeadline");
+  const text = document.getElementById("routeText");
+  const chips = document.getElementById("routePathChips");
+
+  headline.textContent = safestMode ? "Safest route locked" : "Shortest route locked";
+  text.textContent = `${body.explanation} Weighted cost: ${body.weighted_cost}`;
+
+  chips.innerHTML = "";
+  (body.nodes || []).forEach((node, idx) => {
+    const chip = document.createElement("span");
+    chip.className = "route-chip";
+    chip.textContent = node;
+    chips.appendChild(chip);
+    if (idx < body.nodes.length - 1) {
+      const arrow = document.createElement("span");
+      arrow.className = "route-arrow";
+      arrow.textContent = ">";
+      chips.appendChild(arrow);
+    }
+  });
 }
 
 async function fetchRiskMap() {
@@ -175,7 +216,7 @@ async function planRoute() {
     start: document.getElementById("startSelect").value,
     end: document.getElementById("endSelect").value,
     safest: String(safestMode),
-    avoid_steep: String(document.getElementById("avoidSteepToggle").checked),
+    avoid_steep: "false",
     prefer_cleared: String(document.getElementById("preferClearedToggle").checked),
     horizon_hours: String(selectedHorizon()),
   });
@@ -187,7 +228,8 @@ async function planRoute() {
   }
   markLoopStep("routing");
   drawRoute(body.nodes);
-  document.getElementById("routeText").textContent = `${body.explanation} Path: ${body.nodes.join(" -> ")} | cost ${body.weighted_cost}`;
+  renderRouteOutput(body);
+  publishSync("route_planned", { nodes: body.nodes });
 }
 
 async function submitReport(reportType) {
@@ -206,6 +248,7 @@ async function submitReport(reportType) {
   }
   markLoopStep("reporting");
   document.getElementById("reportStatus").textContent = `${reportType} report submitted for ${segmentName(selectedSegmentId)}.`;
+  publishSync("report_submitted", { segment_id: selectedSegmentId, report_type: reportType });
   await refreshAll({ fromFeedback: true });
 }
 
@@ -237,6 +280,7 @@ function attachActions() {
     document.getElementById("safestBtn").classList.remove("active");
   };
   document.getElementById("timeline").oninput = () => {
+    localStorage.setItem(SHARED_HORIZON_KEY, document.getElementById("timeline").value);
     if (refreshTimer) clearTimeout(refreshTimer);
     refreshTimer = setTimeout(() => refreshAll(), 150);
   };
@@ -244,13 +288,29 @@ function attachActions() {
   document.querySelectorAll("[data-report]").forEach((button) => {
     button.onclick = () => submitReport(button.getAttribute("data-report"));
   });
+
+  window.addEventListener("storage", (event) => {
+    if (event.key === SHARED_HORIZON_KEY && event.newValue) {
+      document.getElementById("timeline").value = event.newValue;
+      refreshAll();
+    }
+    if (event.key === SHARED_SYNC_KEY && event.newValue) {
+      refreshAll();
+    }
+  });
+
+  if (syncChannel) {
+    syncChannel.onmessage = () => refreshAll();
+  }
 }
 
 async function boot() {
+  applySharedHorizon();
   attachActions();
   renderLoopSteps();
   try {
     await refreshAll();
+    pollingHandle = setInterval(() => refreshAll(), 15000);
   } catch (error) {
     document.getElementById("warningBanner").textContent = "Failed to connect to API.";
   }
