@@ -26,13 +26,23 @@ def test_report_feedback_levels():
     engine = FrostFlowEngine()
     baseline = engine.compute_risk_map(0)["S1"]
     execute("INSERT INTO Reports(segment_id, report_type, timestamp) VALUES ('S1','Icy', datetime('now'))")
-    after_single = engine.compute_risk_map(0)["S1"]
-    execute("INSERT INTO Reports(segment_id, report_type, timestamp) VALUES ('S1','Icy', datetime('now'))")
-    after_multiple = engine.compute_risk_map(0)["S1"]
+    after_icy = engine.compute_risk_map(0)["S1"]
+    execute("DELETE FROM Reports")
+    execute("INSERT INTO Reports(segment_id, report_type, timestamp) VALUES ('S1','Slushy', datetime('now'))")
+    after_slushy = engine.compute_risk_map(0)["S1"]
 
-    assert after_single.risk_score >= baseline.risk_score
-    assert after_single.status == "caution"
-    assert after_multiple.status == "confirmed_hazard"
+    assert after_icy.risk_score >= baseline.risk_score
+    assert after_icy.status == "confirmed_hazard"
+    assert after_slushy.status == "caution"
+    assert after_icy.risk_score > after_slushy.risk_score
+
+
+def test_mark_treated_forces_stable_green():
+    engine = FrostFlowEngine()
+    execute("UPDATE WalkwaySegments SET treatment_status = 1 WHERE id = 'S1'")
+    treated = engine.compute_risk_map(0)["S1"]
+    assert treated.status == "treated_stable"
+    assert treated.display_color == "green"
 
 
 def test_route_and_maintenance():
