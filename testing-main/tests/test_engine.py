@@ -55,8 +55,35 @@ def test_route_and_maintenance():
     assert len(plan["ranked_segments"]) > 0
     assert "chloride_reduction_pct" in plan["environmental_metrics"]
     assert "chloride_runoff_reduction_kg" in plan["environmental_metrics"]
-    assert plan["ranked_segments"][0]["recommended_treatment"] in {"brine", "salt", "sand"}
+    assert plan["ranked_segments"][0]["recommended_treatment"] in {"none", "brine", "salt", "sand"}
     assert "kg_saved_vs_blanket" in plan["ranked_segments"][0]
     assert plan["ranked_segments"][0]["treated_area_m2"] > 0
     assert plan["ranked_segments"][0]["treatment_rate_unit"] in {"g/m2", "mL/m2"}
     assert "material_cost_saved" in plan["environmental_metrics"]
+
+    route_without_hazard = engine.compute_route(
+        "SUB",
+        "HUB",
+        safest=True,
+        avoid_steep=False,
+        prefer_cleared=True,
+        overlay_options={"hazard": False, "treated": True, "drainage": True, "shading": True},
+    )
+    assert route_without_hazard.weighted_cost <= route.weighted_cost
+
+
+def test_treated_segment_requires_zero_when_treated_overlay_enabled():
+    engine = FrostFlowEngine()
+    execute("UPDATE WalkwaySegments SET treatment_status = 1 WHERE id IN ('S1','S2','S5')")
+    plan = engine.maintenance_plan(6, overlay_options={"treated": True, "hazard": True, "drainage": True, "shading": True})
+    s1 = next(item for item in plan["ranked_segments"] if item["segment_id"] == "S1")
+    assert s1["recommended_treatment"] == "none"
+    assert s1["treatment_required_kg"] == 0.0
+    plan_without_treated_overlay = engine.maintenance_plan(
+        6,
+        overlay_options={"treated": False, "hazard": True, "drainage": True, "shading": True},
+    )
+    assert (
+        plan_without_treated_overlay["environmental_metrics"]["optimized_treatment_mass_kg"]
+        > plan["environmental_metrics"]["optimized_treatment_mass_kg"]
+    )
