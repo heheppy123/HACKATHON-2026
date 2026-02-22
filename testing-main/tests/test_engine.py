@@ -16,6 +16,12 @@ def test_risk_map_shape():
     assert risk["S1"].risk_peak_hour in {0, 6, 12, 18, 24}
 
 
+def test_startup_defaults_to_clear():
+    engine = FrostFlowEngine()
+    risk = engine.compute_risk_map(0)
+    assert all(condition.status == "clear" for condition in risk.values())
+
+
 def test_report_feedback_levels():
     engine = FrostFlowEngine()
     baseline = engine.compute_risk_map(0)["S1"]
@@ -41,3 +47,6 @@ def test_route_and_maintenance():
     assert "chloride_runoff_reduction_kg" in plan["environmental_metrics"]
     assert plan["ranked_segments"][0]["recommended_treatment"] in {"brine", "salt", "sand"}
     assert "kg_saved_vs_blanket" in plan["ranked_segments"][0]
+    assert plan["ranked_segments"][0]["treated_area_m2"] > 0
+    assert plan["ranked_segments"][0]["treatment_rate_unit"] in {"g/m2", "mL/m2"}
+    assert "material_cost_saved" in plan["environmental_metrics"]
