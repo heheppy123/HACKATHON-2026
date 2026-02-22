@@ -84,6 +84,14 @@ DRAINAGE_TREATMENT_FACTOR = {
     "poor": 1.16,
 }
 
+OVERLAY_HAZARD_SEGMENTS = {"S2", "S3", "S5"}
+DEFAULT_OVERLAY_OPTIONS = {
+    "hazard": True,
+    "treated": True,
+    "drainage": True,
+    "shading": True,
+}
+
 
 class FrostFlowEngine:
     def __init__(self) -> None:
@@ -223,9 +231,12 @@ class FrostFlowEngine:
         avoid_steep: bool,
         prefer_cleared: bool,
         horizon_hours: int = 0,
+        overlay_options: dict | None = None,
     ) -> RouteResult:
         adj = self.graph()
         risk_map = self.compute_risk_map(horizon_hours)
+        overlay = self._normalize_overlay_options(overlay_options)
+        weather = self.weather_for_horizon(horizon_hours)
         if start not in adj or end not in adj:
             raise ValueError("Unknown start/end")
 
@@ -251,22 +262,24 @@ class FrostFlowEngine:
 
             for nxt, seg in adj[node]:
                 condition = risk_map[seg.segment_id]
+                overlay_modifier = self._overlay_modifier(seg, condition, overlay, weather.temp_c)
+                final_risk = self._clamp(condition.risk_score + overlay_modifier)
                 base = seg.distance_m
                 criticality = self._criticality(seg)
 
                 if safest:
-                    base *= 1 + (condition.risk_score * 1.55)
+                    base *= 1 + (final_risk * 1.55)
                     base *= status_factor.get(condition.status, 1.0)
                     base *= 1 - (criticality * 0.08)
 
-                    if condition.treated and condition.status in {"treated_monitor", "treated_stable"}:
+                    if overlay["treated"] and condition.treated and condition.status in {"treated_monitor", "treated_stable"}:
                         base *= 0.78
                     if seg.accessible_route and seg.slope_pct <= 2.2:
                         base *= 0.9
                     if seg.slope_pct > 4:
                         base *= 1.18
                 else:
-                    base *= 1 + (condition.risk_score * 0.2)
+                    base *= 1 + (final_risk * 0.2)
 
                 if avoid_steep and seg.slope_pct > 3:
                     base *= 1.28
@@ -276,6 +289,14 @@ class FrostFlowEngine:
                         base *= 0.9
                     if condition.status in {"caution", "confirmed_hazard"}:
                         base *= 1.12
+
+                flags = self._overlay_flags(seg)
+                if overlay["hazard"] and flags["hazard"]:
+                    base *= 1.08
+                if overlay["drainage"] and flags["drainage"] and condition.refreeze_likelihood >= 0.45:
+                    base *= 1.12
+                if overlay["shading"] and flags["shading"] and -2 <= weather.temp_c <= 1:
+                    base *= 1.08
 
                 new_cost = cur + base
                 if new_cost < dist[nxt]:
@@ -306,16 +327,25 @@ class FrostFlowEngine:
         )
         return RouteResult(nodes=nodes, segments=segs, weighted_cost=round(dist[end], 2), explanation=explanation)
 
-    def maintenance_plan(self, horizon_hours: int = 6, storm_mode: bool = False) -> dict:
+    def maintenance_plan(
+        self,
+        horizon_hours: int = 6,
+        storm_mode: bool = False,
+        overlay_options: dict | None = None,
+    ) -> dict:
         segments = self.load_segments()
         risk_map = self.compute_risk_map(horizon_hours)
         weather = self.weather_for_horizon(horizon_hours)
+        overlay = self._normalize_overlay_options(overlay_options)
 
-        ranked = sorted(
-            segments,
-            key=lambda s: self._priority_index(s, risk_map[s.segment_id], storm_mode=storm_mode),
-            reverse=True,
-        )
+        def segment_priority(seg: Segment) -> float:
+            condition = risk_map[seg.segment_id]
+            final_risk = self._clamp(
+                condition.risk_score + self._overlay_modifier(seg, condition, overlay, weather.temp_c)
+            )
+            return self._priority_index(seg, condition, storm_mode=storm_mode, risk_score=final_risk)
+
+        ranked = sorted(segments, key=segment_priority, reverse=True)
 
         ranked_payload = []
         optimized_mass_kg = 0.0
@@ -329,18 +359,45 @@ class FrostFlowEngine:
 
         for seg in ranked:
             condition = risk_map[seg.segment_id]
-            treatment = self._recommended_treatment(condition.risk_score, weather.temp_c)
+            flags = self._overlay_flags(seg)
+            overlay_modifier = self._overlay_modifier(seg, condition, overlay, weather.temp_c)
+            final_risk = self._clamp(condition.risk_score + overlay_modifier)
+
+            needs_treatment = final_risk > 0.65 or (
+                final_risk > 0.45 and overlay["hazard"] and flags["hazard"]
+            )
+
+            if overlay["treated"] and seg.treated:
+                needs_treatment = False
+
+            if overlay["drainage"] and flags["drainage"] and -4 <= weather.temp_c <= 1 and final_risk >= 0.45:
+                treatment = "brine"
+            else:
+                treatment = self._recommended_treatment(final_risk, weather.temp_c)
+
             treatment_calc = self._treatment_requirement(seg, condition, treatment, weather.temp_c)
 
-            required_kg = treatment_calc["required_kg"]
-            if seg.treated:
-                retreatment_factor = 0.45 if condition.risk_score >= 0.55 else 0.2
-                required_kg *= retreatment_factor
-                treatment_calc["engineering_basis"].append(
-                    f"treated segment top-up factor {retreatment_factor:.2f} applied"
-                )
-            required_kg = round(required_kg, 1)
+            dose_multiplier = 1.0
+            if overlay["hazard"] and flags["hazard"]:
+                dose_multiplier += 0.20
+            if overlay["drainage"] and flags["drainage"]:
+                dose_multiplier += 0.15
+            if overlay["shading"] and flags["shading"]:
+                dose_multiplier += 0.10
 
+            required_kg = treatment_calc["required_kg"] * dose_multiplier
+            treatment_calc["engineering_basis"].append(
+                f"overlay dose multiplier {dose_multiplier:.2f} from active layers"
+            )
+
+            if not needs_treatment:
+                required_kg = 0.0
+                treatment = "none"
+                treatment_calc["adjusted_rate"] = 0.0
+                treatment_calc["rate_unit"] = "g/m2"
+                treatment_calc["engineering_basis"].append("no treatment required under selected overlays")
+
+            required_kg = round(required_kg, 1)
             blanket_kg = round(self._blanket_salt_mass_kg(seg), 1)
             saved_kg = round(max(0.0, blanket_kg - required_kg), 1)
 
@@ -348,7 +405,7 @@ class FrostFlowEngine:
                 excess_g_m2 = treatment_calc["adjusted_rate"] - BLANKET_SALT_G_PER_M2
                 oversalt_penalty_kg += (treatment_calc["area_m2"] * excess_g_m2) / 1000
 
-            priority = round(self._priority_index(seg, condition, storm_mode=storm_mode), 3)
+            priority = round(self._priority_index(seg, condition, storm_mode=storm_mode, risk_score=final_risk), 3)
             peak_hour = condition.risk_peak_hour
             pretreat_hour = condition.recommended_pretreat_hour
             eta_minutes = 30 if peak_hour <= horizon_hours else int((peak_hour - horizon_hours) * 60)
@@ -361,19 +418,24 @@ class FrostFlowEngine:
             if seg.main_corridor:
                 roles.append("main_corridor")
 
-            item_cost = required_kg * TREATMENT_UNIT_COST[treatment]
+            item_cost = required_kg * TREATMENT_UNIT_COST.get(treatment, 0.0)
 
             ranked_payload.append(
                 {
                     "segment_id": seg.segment_id,
                     "name": seg.name,
-                    "risk_score": condition.risk_score,
+                    "risk_score": round(final_risk, 3),
+                    "base_risk_score": condition.risk_score,
+                    "overlay_modifier": round(overlay_modifier, 3),
                     "confidence": condition.confidence,
                     "status": condition.status,
                     "display_color": condition.display_color,
                     "treated": condition.treated,
                     "priority_index": priority,
                     "critical_roles": roles,
+                    "hazard_zone": flags["hazard"],
+                    "drainage_zone": flags["drainage"],
+                    "shaded_zone": flags["shading"],
                     "surface_type": seg.surface_type,
                     "slope_pct": seg.slope_pct,
                     "drainage_quality": seg.drainage_quality,
@@ -401,7 +463,8 @@ class FrostFlowEngine:
 
             optimized_mass_kg += required_kg
             blanket_mass_kg += blanket_kg
-            optimized_chloride_kg += required_kg * CHLORIDE_FACTOR[treatment]
+            if treatment in CHLORIDE_FACTOR:
+                optimized_chloride_kg += required_kg * CHLORIDE_FACTOR[treatment]
             blanket_chloride_kg += blanket_kg * CHLORIDE_FACTOR["salt"]
             total_saved_kg += saved_kg
             optimized_cost += item_cost
@@ -429,6 +492,7 @@ class FrostFlowEngine:
 
         return {
             "storm_mode": storm_mode,
+            "overlay_options": overlay,
             "ranked_segments": ranked_payload[:6],
             "treatment_route_nodes": route_nodes,
             "critical_routes": {
@@ -664,9 +728,16 @@ class FrostFlowEngine:
             return "caution", STATUS_COLOR["caution"]
         return "clear", STATUS_COLOR["clear"]
 
-    def _priority_index(self, seg: Segment, condition: SegmentCondition, storm_mode: bool = False) -> float:
+    def _priority_index(
+        self,
+        seg: Segment,
+        condition: SegmentCondition,
+        storm_mode: bool = False,
+        risk_score: float | None = None,
+    ) -> float:
+        effective_risk = condition.risk_score if risk_score is None else risk_score
         score = (
-            (condition.risk_score * 0.55)
+            (effective_risk * 0.55)
             + (self._criticality(seg) * 0.28)
             + ((seg.foot_traffic_importance / 5) * 0.17)
         )
@@ -807,6 +878,46 @@ class FrostFlowEngine:
         if nodes[0] != nodes[-1]:
             nodes.append(nodes[0])
         return nodes
+
+    def _normalize_overlay_options(self, overlay_options: dict | None) -> dict:
+        merged = dict(DEFAULT_OVERLAY_OPTIONS)
+        if overlay_options:
+            for key in merged:
+                if key in overlay_options:
+                    merged[key] = bool(overlay_options[key])
+        return merged
+
+    def _overlay_flags(self, seg: Segment) -> dict:
+        return {
+            "hazard": seg.segment_id in OVERLAY_HAZARD_SEGMENTS or seg.surface_type == "bridge" or seg.slope_pct >= 3.5,
+            "drainage": seg.drainage_quality == "poor",
+            "shading": seg.shading_exposure >= 0.65,
+        }
+
+    def _overlay_modifier(self, seg: Segment, condition: SegmentCondition, overlay: dict, temp_c: float) -> float:
+        flags = self._overlay_flags(seg)
+        modifier = 0.0
+
+        if overlay["hazard"] and flags["hazard"]:
+            modifier += 0.18
+        if overlay["drainage"] and flags["drainage"]:
+            modifier += 0.1
+            if condition.refreeze_likelihood >= 0.45:
+                modifier += 0.12
+        if overlay["shading"] and flags["shading"]:
+            modifier += 0.08
+            if -2 <= temp_c <= 1:
+                modifier += 0.05
+        if condition.treated:
+            if overlay["treated"]:
+                modifier -= 0.28 if condition.refreeze_likelihood < 0.75 else 0.14
+            else:
+                modifier += abs(condition.treatment_adjustment)
+
+        return max(-0.45, min(0.45, modifier))
+
+    def _clamp(self, value: float, lo: float = 0.0, hi: float = 1.0) -> float:
+        return max(lo, min(hi, value))
 
     def _as_utc(self, dt: datetime) -> datetime:
         if dt.tzinfo is None:
