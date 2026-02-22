@@ -61,6 +61,7 @@ def risk_map(horizon_hours: int = Query(default=0, ge=0, le=24)) -> dict:
                 "emergency_route": seg.emergency_route,
                 "accessible_route": seg.accessible_route,
                 "main_corridor": seg.main_corridor,
+                "wind_corridor": seg.wind_corridor,
                 "risk_score": cond.risk_score,
                 "weather_risk": cond.weather_risk,
                 "structural_risk": cond.structural_risk,
@@ -75,6 +76,7 @@ def risk_map(horizon_hours: int = Query(default=0, ge=0, le=24)) -> dict:
                 "risk_peak_hour": cond.risk_peak_hour,
                 "risk_peak_score": cond.risk_peak_score,
                 "recommended_pretreat_hour": cond.recommended_pretreat_hour,
+                "refreeze_likelihood": cond.refreeze_likelihood,
             }
         )
 
@@ -135,8 +137,11 @@ def report(payload: ReportIn) -> dict:
 
 
 @app.get("/maintenance-plan")
-def maintenance_plan(horizon_hours: int = Query(default=6, ge=0, le=24)) -> dict:
-    return engine.maintenance_plan(horizon_hours)
+def maintenance_plan(
+    horizon_hours: int = Query(default=6, ge=0, le=24),
+    storm_mode: bool = Query(default=False),
+) -> dict:
+    return engine.maintenance_plan(horizon_hours, storm_mode=storm_mode)
 
 
 @app.get("/timeline-preview")
