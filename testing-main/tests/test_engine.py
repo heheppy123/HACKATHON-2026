@@ -83,7 +83,17 @@ def test_treated_segment_requires_zero_when_treated_overlay_enabled():
         6,
         overlay_options={"treated": False, "hazard": True, "drainage": True, "shading": True},
     )
-    assert (
-        plan_without_treated_overlay["environmental_metrics"]["optimized_treatment_mass_kg"]
-        > plan["environmental_metrics"]["optimized_treatment_mass_kg"]
-    )
+    assert plan["environmental_metrics"]["optimized_treatment_mass_kg"] > 0
+    assert plan_without_treated_overlay["environmental_metrics"]["optimized_treatment_mass_kg"] == 0
+
+
+def test_environmental_metrics_zero_when_nothing_treated():
+    engine = FrostFlowEngine()
+    execute("UPDATE WalkwaySegments SET treatment_status = 0")
+    plan = engine.maintenance_plan(6, overlay_options={"treated": True, "hazard": True, "drainage": True, "shading": True})
+    env = plan["environmental_metrics"]
+    assert env["optimized_treatment_mass_kg"] == 0
+    assert env["blanket_treatment_mass_kg"] == 0
+    assert env["treatment_mass_saved_kg"] == 0
+    assert env["chloride_runoff_reduction_kg"] == 0
+    assert env["pollution_avoided_kg"] == 0
