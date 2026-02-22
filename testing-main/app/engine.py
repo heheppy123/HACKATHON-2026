@@ -9,8 +9,8 @@ from .db import fetch_rows
 from .models import ReportType, RouteResult, Segment, SegmentCondition, WeatherSnapshot
 
 REPORT_IMPACT = {
-    ReportType.icy.value: 0.28,
-    ReportType.slushy.value: 0.16,
+    ReportType.icy.value: 0.42,
+    ReportType.slushy.value: 0.14,
     ReportType.clear.value: -0.18,
     ReportType.salted.value: -0.24,
 }
@@ -32,7 +32,7 @@ STATUS_COLOR = {
     "confirmed_hazard": "red",
     "caution": "yellow",
     "treated_monitor": "blue",
-    "treated_stable": "teal",
+    "treated_stable": "green",
     "clear": "green",
 }
 
@@ -487,7 +487,7 @@ class FrostFlowEngine:
     ) -> SegmentCondition:
         weather_risk, weather_reasons = self._weather_component(weather, previous_weather)
         structural_risk, structural_reasons = self._structural_component(seg)
-        reports_risk, hazard_reports, report_reasons = self._report_component(segment_reports, now)
+        reports_risk, hazard_reports, icy_reports, slushy_reports, report_reasons = self._report_component(segment_reports, now)
         treatment_adjustment, treatment_reasons = self._treatment_adjustment(seg, weather)
 
         risk = 0.04 + (0.49 * weather_risk) + (0.31 * structural_risk) + reports_risk + treatment_adjustment
@@ -502,7 +502,7 @@ class FrostFlowEngine:
             confidence += 0.02
         confidence = max(0.2, min(0.97, confidence))
 
-        status, display_color = self._classify_status(risk, hazard_reports, seg.treated)
+        status, display_color = self._classify_status(risk, icy_reports, slushy_reports, seg.treated)
         reasons = (weather_reasons + structural_reasons + report_reasons + treatment_reasons)[:6]
 
         peak_hour = int((timeline_meta or {}).get("peak_hour", 0))
@@ -590,9 +590,11 @@ class FrostFlowEngine:
 
         return min(0.82, score), reasons
 
-    def _report_component(self, reports: list[dict], now: datetime) -> tuple[float, int, list[str]]:
+    def _report_component(self, reports: list[dict], now: datetime) -> tuple[float, int, int, int, list[str]]:
         report_score = 0.0
         hazard_reports = 0
+        icy_reports = 0
+        slushy_reports = 0
         reasons: list[str] = []
 
         for report in reports:
@@ -602,8 +604,12 @@ class FrostFlowEngine:
             report_type = report["report_type"]
             report_score += REPORT_IMPACT.get(report_type, 0.0) * decay
 
-            if report_type in {ReportType.icy.value, ReportType.slushy.value} and age_hours <= 12:
-                hazard_reports += 1
+            if age_hours <= 12:
+                if report_type == ReportType.icy.value:
+                    icy_reports += 1
+                elif report_type == ReportType.slushy.value:
+                    slushy_reports += 1
+
             if report_type == ReportType.icy.value:
                 reasons.append("user icy report")
             elif report_type == ReportType.slushy.value:
@@ -613,8 +619,9 @@ class FrostFlowEngine:
             elif report_type == ReportType.salted.value:
                 reasons.append("salted-condition report")
 
+        hazard_reports = icy_reports + slushy_reports
         report_score = max(-0.25, min(0.45, report_score))
-        return report_score, hazard_reports, reasons
+        return report_score, hazard_reports, icy_reports, slushy_reports, reasons
 
     def _treatment_adjustment(self, seg: Segment, weather: WeatherSnapshot) -> tuple[float, list[str]]:
         if not seg.treated:
@@ -642,20 +649,14 @@ class FrostFlowEngine:
 
         return effectiveness, reasons
 
-    def _classify_status(self, risk: float, hazard_reports: int, treated: bool) -> tuple[str, str]:
-        if treated:
-            if (hazard_reports >= 2 and risk > 0.85) or risk >= 0.96:
-                return "confirmed_hazard", STATUS_COLOR["confirmed_hazard"]
-            if hazard_reports >= 1 or risk >= 0.78:
-                return "caution", STATUS_COLOR["caution"]
-            if risk >= 0.45:
-                return "treated_monitor", STATUS_COLOR["treated_monitor"]
-            return "treated_stable", STATUS_COLOR["treated_stable"]
-
-        if hazard_reports >= 2:
+    def _classify_status(self, risk: float, icy_reports: int, slushy_reports: int, treated: bool) -> tuple[str, str]:
+        if icy_reports >= 1:
             return "confirmed_hazard", STATUS_COLOR["confirmed_hazard"]
-        if hazard_reports == 1:
+        if slushy_reports >= 1:
             return "caution", STATUS_COLOR["caution"]
+
+        if treated:
+            return "treated_stable", STATUS_COLOR["treated_stable"]
 
         if risk >= 0.92:
             return "confirmed_hazard", STATUS_COLOR["confirmed_hazard"]
